@@ -47,7 +47,11 @@ class Settings(BaseSettings):
     def validate_cors_origins(cls, origins: tuple[str, ...]) -> tuple[str, ...]:
         normalized: list[str] = []
         for origin in origins:
-            parsed = urlsplit(origin)
+            try:
+                parsed = urlsplit(origin)
+                _ = parsed.port  # Access validates the port text and numeric range.
+            except ValueError as exc:
+                raise ValueError(f"{origin!r} is not an HTTP(S) origin") from exc
             if (
                 parsed.scheme not in {"http", "https"}
                 or not parsed.netloc
@@ -73,4 +77,3 @@ class Settings(BaseSettings):
 @lru_cache
 def get_settings() -> Settings:
     return Settings()
-

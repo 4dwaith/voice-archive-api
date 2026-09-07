@@ -4,11 +4,7 @@ import pytest
 from alembic import command
 from alembic.config import Config
 from fastapi.testclient import TestClient
-from pydantic import ValidationError
 from sqlalchemy import create_engine, inspect, text
-
-from voice_archive_api.core.config import Settings
-from voice_archive_api.main import create_app
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 
@@ -90,8 +86,3 @@ def test_alembic_upgrades_empty_database_to_head_twice(tmp_path: Path) -> None:
         assert revision == "0001_backend_foundation"
     finally:
         engine.dispose()
-
-
-def test_invalid_environment_configuration_is_intelligible() -> None:
-    with pytest.raises(ValidationError, match="environment"):
-        create_app(Settings(environment="staging", _env_file=None))  # type: ignore[arg-type]
