@@ -1,0 +1,15 @@
+.env
+.idea/
+.pytest_cache/
+.ruff_cache/
+.venv/
+.pytest-tmp/
+.uv-cache/
+.uv-python/
+__pycache__/
+*.py[cod]
+.coverage
+coverage.xml
+htmlcov/
+data/
+uploads/
