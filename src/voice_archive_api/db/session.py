@@ -1,5 +1,8 @@
 from collections.abc import Generator
+from functools import lru_cache
+from typing import Annotated
 
+from fastapi import Depends
 from sqlalchemy import Engine, create_engine
 from sqlalchemy.engine import make_url
 from sqlalchemy.orm import Session, sessionmaker
@@ -16,16 +19,21 @@ def create_database_engine(database_url: str) -> Engine:
     return create_engine(database_url, connect_args=connect_args)
 
 
-engine = create_database_engine(get_settings().database_url)
-SessionLocal = sessionmaker(bind=engine, autoflush=False, expire_on_commit=False)
+@lru_cache
+def get_engine() -> Engine:
+    return create_database_engine(get_settings().database_url)
 
 
-def get_db() -> Generator[Session, None, None]:
-    """Provide a request-scoped session without implicit transaction commits."""
+@lru_cache
+def get_session_factory() -> sessionmaker[Session]:
+    return sessionmaker(
+        bind=get_engine(), autoflush=False, expire_on_commit=False
+    )
 
-    session = SessionLocal()
-    try:
-        yield session
-    finally:
-        session.close()
+
+def get_db(
+    factory: Annotated[sessionmaker[Session], Depends(get_session_factory)],
+) -> Generator[Session, None, None]:
+    with factory() as s:
+        yield s
 
