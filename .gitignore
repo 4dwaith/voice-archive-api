@@ -1,4 +1,6 @@
 .env
+.env.*
+!.env.example
 .idea/
 .pytest_cache/
 .ruff_cache/
@@ -11,5 +13,6 @@ __pycache__/
 .coverage
 coverage.xml
 htmlcov/
+reports/
 data/
 uploads/

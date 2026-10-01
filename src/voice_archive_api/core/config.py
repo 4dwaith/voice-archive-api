@@ -3,29 +3,30 @@ from pathlib import Path
 from typing import Literal, Self
 from urllib.parse import urlsplit
 
-from pydantic import PositiveInt, field_validator, model_validator
+from pydantic import Field, PositiveInt, SecretStr, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
-from sqlalchemy.engine import make_url
-from sqlalchemy.exc import ArgumentError
+from sqlalchemy.engine import URL
 
 PROJECT_ROOT = Path(__file__).resolve().parents[3]
-DEFAULT_DATABASE_PATH = PROJECT_ROOT / "data" / "voice_archive.sqlite3"
 
 
 class Settings(BaseSettings):
     """Runtime configuration loaded from VOICE_ARCHIVE_* variables."""
 
     model_config = SettingsConfigDict(
-        env_file=PROJECT_ROOT / ".env",
-        env_file_encoding="utf-8",
         env_prefix="VOICE_ARCHIVE_",
-        extra="forbid",
+        env_parse_none_str="null",
+        extra="ignore",
     )
 
+    # Supplied by the process environment (Compose or the development runner).
     environment: Literal["development", "test", "production"] = "development"
-    database_url: str = f"sqlite:///{DEFAULT_DATABASE_PATH.as_posix()}"
+    postgres_user: str = Field(min_length=1)
+    postgres_password: SecretStr = Field(min_length=1)
+    postgres_db: str = Field(min_length=1)
+    postgres_host: str = Field(default="127.0.0.1", min_length=1)
+    postgres_port: int = Field(default=5432, ge=1, le=65535)
     upload_root: Path = PROJECT_ROOT / "uploads"
-    upload_max_bytes: PositiveInt | None = None
     cors_origins: tuple[str, ...] = (
         "http://localhost:5173",
         "http://127.0.0.1:5173",
@@ -33,14 +34,18 @@ class Settings(BaseSettings):
         "https://127.0.0.1:5173",
     )
 
-    @field_validator("database_url")
-    @classmethod
-    def validate_database_url(cls, value: str) -> str:
-        try:
-            make_url(value)
-        except ArgumentError as exc:
-            raise ValueError("must be a valid SQLAlchemy database URL") from exc
-        return value
+    upload_max_bytes: PositiveInt | None = None
+
+    @property
+    def database_url(self) -> URL:
+        return URL.create(
+            "postgresql+psycopg",
+            username=self.postgres_user,
+            password=self.postgres_password.get_secret_value(),
+            host=self.postgres_host,
+            port=self.postgres_port,
+            database=self.postgres_db,
+        )
 
     @field_validator("cors_origins")
     @classmethod
