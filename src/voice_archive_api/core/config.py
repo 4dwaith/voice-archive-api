@@ -19,7 +19,8 @@ class Settings(BaseSettings):
         extra="ignore",
     )
 
-    # Supplied by the process environment (Compose or the development runner).
+    # Field definitions and fallbacks (the actual values are supplied by the process environment
+    # (Compose or the development runner) when the settings instance is created).
     environment: Literal["development", "test", "production"] = "development"
     postgres_user: str = Field(min_length=1)
     postgres_password: SecretStr = Field(min_length=1)
