@@ -226,7 +226,7 @@ def test_upgrade_from_first_book_revision_preserves_existing_books(test_engine, 
         "language": "kn", "created_at": now, "updated_at": now,
     }
 
-    # Raw SQL insert to preserve the historical data.
+    # Insert using the historical schema, independently of future ORM changes.
     with test_engine.begin() as connection:
         book_id = connection.execute(
             historical_books.insert().values(**values).returning(historical_books.c.id)
