@@ -10,7 +10,7 @@ from voice_archive_api.storage.base import BinarySource, FileTooLarge, InvalidSt
 
 CHUNK_SIZE = 1024 * 1024  # 1 MB
 STALE_AFTER_SECONDS = 24 * 60 * 60
-KEY_PATTERN = re.compile(r"(temporary|assets)/[0-9a-f]{32}")
+KEY_PATTERN = re.compile(r"(temporary|promoted)/[0-9a-f]{32}")
 
 
 class LocalStorage:
@@ -75,7 +75,7 @@ class LocalStorage:
         if not temporary_key.startswith("temporary/"):
             raise InvalidStorageKey("Only temporary files can be promoted")
 
-        key = f"assets/{uuid4().hex}"
+        key = f"promoted/{uuid4().hex}"
         destination = self._path(key)
         destination.parent.mkdir(parents=True, exist_ok=True)
         # No copy, no partially visible destination, and no replacement of an

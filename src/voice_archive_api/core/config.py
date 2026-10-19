@@ -36,6 +36,7 @@ class Settings(BaseSettings):
     )
 
     upload_max_bytes: PositiveInt | None = None
+    cover_max_bytes: PositiveInt = 25 * 1024 * 1024
 
     @property
     def database_url(self) -> URL:

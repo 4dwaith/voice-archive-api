@@ -28,7 +28,7 @@ def test_temporary_file_round_trip_and_immutable_promotion(storage):
         assert incoming.read() == b"validated bytes"
 
     promoted = storage.promote(temporary)
-    assert promoted.startswith("assets/")
+    assert promoted.startswith("promoted/")
     assert not storage.exists(temporary)
     with storage.open(promoted) as incoming:
         assert incoming.read() == b"validated bytes"
@@ -225,9 +225,9 @@ def test_promotion_links_the_same_file_before_removing_the_temporary_name(storag
     "key",
     [
         "", ".", "../outside", "/tmp/outside", "C:/outside", "C:\\outside",
-        "assets/../outside", "assets//" + "0" * 32,
-        "assets\\" + "0" * 32, "assets/" + "0" * 32 + "/extra",
-        "assets/" + "0" * 32 + ":stream", "assets/cover.png", None,
+        "promoted/../outside", "promoted//" + "0" * 32,
+        "promoted\\" + "0" * 32, "promoted/" + "0" * 32 + "/extra",
+        "promoted/" + "0" * 32 + ":stream", "promoted/cover.png", None,
     ],
 )
 def test_invalid_keys_are_rejected_by_every_key_operation(storage, key):
@@ -244,7 +244,7 @@ def test_symlinks_cannot_redirect_storage_operations(storage, tmp_path, redirect
     target = outside / ("a" * 32)
     target.write_bytes(b"keep")
     storage.root.mkdir()
-    namespace = storage.root / "assets"
+    namespace = storage.root / "promoted"
     try:
         if redirect_namespace:
             # The entire directory is linked outside the storage root
@@ -256,7 +256,7 @@ def test_symlinks_cannot_redirect_storage_operations(storage, tmp_path, redirect
     except OSError as exc:
         pytest.skip(f"Creating symlinks is unavailable: {exc}")
 
-    key = "assets/" + target.name
+    key = "promoted/" + target.name
     for operation in (storage.open, storage.delete, storage.exists):
         with pytest.raises(InvalidStorageKey):
             operation(key)
@@ -278,7 +278,7 @@ def test_non_seekable_stream_satisfies_the_storage_contract(storage):
         assert incoming.read() == b"firstsecond"
 
 
-def test_clear_stale_preserves_new_temp_files_and_assets(storage):
+def test_clear_stale_preserves_new_temp_files_and_promoted_files(storage):
     now = 2_000_000_000
     cutoff = now - STALE_AFTER_SECONDS
     old = storage.put_temporary(BytesIO(b"old"), max_bytes=100)

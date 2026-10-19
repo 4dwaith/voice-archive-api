@@ -25,6 +25,7 @@ def test_settings_defaults() -> None:
     assert settings.postgres_port == 5432
     assert settings.upload_root == PROJECT_ROOT / "uploads"
     assert settings.upload_max_bytes is None
+    assert settings.cover_max_bytes == 25 * 1024 * 1024
 
 
 def test_process_environment_is_loaded(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -32,11 +33,13 @@ def test_process_environment_is_loaded(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("VOICE_ARCHIVE_POSTGRES_PORT", "5433")
     monkeypatch.setenv("VOICE_ARCHIVE_CORS_ORIGINS", '["https://example.com"]')
     monkeypatch.setenv("VOICE_ARCHIVE_UPLOAD_MAX_BYTES", "4096")
+    monkeypatch.setenv("VOICE_ARCHIVE_COVER_MAX_BYTES", "8192")
     settings = Settings()
     assert settings.database_url.host == "db"
     assert settings.database_url.port == 5433
     assert settings.cors_origins == ("https://example.com",)
     assert settings.upload_max_bytes == 4096
+    assert settings.cover_max_bytes == 8192
 
 
 def test_dotenv_is_not_loaded(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -128,3 +131,10 @@ def test_empty_cors_origins_are_rejected() -> None:
 def test_non_positive_upload_limit_is_rejected(upload_max_bytes) -> None:
     with pytest.raises(ValidationError, match="greater than 0"):
         Settings(upload_max_bytes=upload_max_bytes)
+
+
+@pytest.mark.parametrize("limit", [0, -1, "null"])
+def test_invalid_cover_limit_is_rejected(limit, monkeypatch) -> None:
+    monkeypatch.setenv("VOICE_ARCHIVE_COVER_MAX_BYTES", str(limit))
+    with pytest.raises(ValidationError, match="cover_max_bytes"):
+        Settings()
