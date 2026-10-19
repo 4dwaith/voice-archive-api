@@ -16,6 +16,7 @@ from voice_archive_api.books.constants import (
     AUTHOR_LIMIT,
     DESCRIPTION_LIMIT,
     TITLE_LIMIT,
+    UNIQUE_BOOK_IDENTITY,
 )
 from voice_archive_api.db.base import Base
 
@@ -25,7 +26,7 @@ class Book(Base):
     __table_args__ = (
         # Fixed-size index expressions avoid long Unicode text.
         Index(
-            "uq_books_identity",
+            UNIQUE_BOOK_IDENTITY,
             text("digest(normalized_title, 'sha256')"),
             text("digest(normalized_author, 'sha256')"),
             unique=True,
