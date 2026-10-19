@@ -7,6 +7,8 @@ from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy.engine import make_url
 
 from voice_archive_api import __version__
+from voice_archive_api.api.errors import install_error_handlers
+from voice_archive_api.api.v1.books import install_book_error_handlers
 from voice_archive_api.api.v1.router import router as v1_router
 from voice_archive_api.core.config import Settings, get_settings
 
@@ -42,6 +44,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         allow_headers=["*"],
     )
     application.include_router(v1_router, prefix="/api/v1")
+    install_error_handlers(application)
+    install_book_error_handlers(application)
     return application
 
 

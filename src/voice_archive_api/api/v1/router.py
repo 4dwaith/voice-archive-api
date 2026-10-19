@@ -8,8 +8,10 @@ from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 
 from voice_archive_api.db.session import get_db
+from voice_archive_api.api.v1.books import router as books_router
 
 router = APIRouter()
+router.include_router(books_router)
 
 
 class HealthResponse(BaseModel):
