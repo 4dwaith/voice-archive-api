@@ -26,6 +26,7 @@ def test_settings_defaults() -> None:
     assert settings.upload_root == PROJECT_ROOT / "uploads"
     assert settings.upload_max_bytes is None
     assert settings.cover_max_bytes == 25 * 1024 * 1024
+    assert settings.pdf_max_bytes == 1_500_000_000
 
 
 def test_process_environment_is_loaded(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -34,12 +35,14 @@ def test_process_environment_is_loaded(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("VOICE_ARCHIVE_CORS_ORIGINS", '["https://example.com"]')
     monkeypatch.setenv("VOICE_ARCHIVE_UPLOAD_MAX_BYTES", "4096")
     monkeypatch.setenv("VOICE_ARCHIVE_COVER_MAX_BYTES", "8192")
+    monkeypatch.setenv("VOICE_ARCHIVE_PDF_MAX_BYTES", "5000000000")
     settings = Settings()
     assert settings.database_url.host == "db"
     assert settings.database_url.port == 5433
     assert settings.cors_origins == ("https://example.com",)
     assert settings.upload_max_bytes == 4096
     assert settings.cover_max_bytes == 8192
+    assert settings.pdf_max_bytes == 5_000_000_000
 
 
 def test_dotenv_is_not_loaded(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -137,4 +140,11 @@ def test_non_positive_upload_limit_is_rejected(upload_max_bytes) -> None:
 def test_invalid_cover_limit_is_rejected(limit, monkeypatch) -> None:
     monkeypatch.setenv("VOICE_ARCHIVE_COVER_MAX_BYTES", str(limit))
     with pytest.raises(ValidationError, match="cover_max_bytes"):
+        Settings()
+
+
+@pytest.mark.parametrize("limit", [0, -1, "null"])
+def test_invalid_pdf_limit_is_rejected(limit, monkeypatch) -> None:
+    monkeypatch.setenv("VOICE_ARCHIVE_PDF_MAX_BYTES", str(limit))
+    with pytest.raises(ValidationError, match="pdf_max_bytes"):
         Settings()
