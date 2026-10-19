@@ -56,10 +56,16 @@ def test_database_url(test_admin_engine: Engine) -> Generator[str]:
 
 
 @pytest.fixture
-def test_engine(test_database_url: str) -> Generator[Engine]:
+def migration_config(test_database_url: str) -> Config:
+    """Use the application's migration setup with this test's isolated database."""
     config = Config(Path(__file__).resolve().parents[1] / "alembic.ini")
     config.set_main_option("sqlalchemy.url", test_database_url.replace("%", "%%"))
-    command.upgrade(config, "head")
+    return config
+
+
+@pytest.fixture
+def test_engine(test_database_url: str, migration_config: Config) -> Generator[Engine]:
+    command.upgrade(migration_config, "head")
     engine = create_database_engine(test_database_url)
     try:
         yield engine
@@ -101,4 +107,24 @@ def application(test_database_url: str, test_engine: Engine) -> FastAPI:
 @pytest.fixture
 def client(application: FastAPI) -> Generator[TestClient]:
     with TestClient(application) as test_client:
+        yield test_client
+
+
+@pytest.fixture
+def schema_only_client() -> Generator[TestClient]:
+    """Serve API documentation without provisioning a test database."""
+    settings = Settings(
+        environment="test",
+        postgres_user="unused",
+        postgres_password="unused",
+        postgres_db="unused",
+        _env_file=None,
+    )
+    app = create_app(settings)
+
+    def unexpected_database_access():
+        raise AssertionError("Schema requests must not access the database")
+
+    app.dependency_overrides[get_db] = unexpected_database_access
+    with TestClient(app) as test_client:
         yield test_client

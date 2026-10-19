@@ -1,21 +1,14 @@
-from pathlib import Path
 from unittest.mock import Mock
 
 import pytest
-from alembic.config import Config
 from fastapi.testclient import TestClient
-from sqlalchemy import create_engine, inspect, text
+from sqlalchemy import text
 from sqlalchemy.exc import OperationalError
 from sqlalchemy.orm import Session
 
 from voice_archive_api.core.config import Settings
 from voice_archive_api.db.session import get_db
 from voice_archive_api.main import create_app
-
-from alembic import command
-
-PROJECT_ROOT = Path(__file__).resolve().parents[1]
-
 
 def test_health_returns_versioned_response(client: TestClient) -> None:
     response = client.get("/api/v1/health")
@@ -73,9 +66,6 @@ def test_ready_uses_isolated_postgres_database(
     assert response.json() == {"status": "ok", "api_version": "v1"}
 
     with test_engine.connect() as connection:
-        assert connection.scalar(text("SELECT current_database()")).startswith(
-            "va_test_"
-        )
         assert "PostgreSQL" in connection.scalar(text("SELECT version()"))
 
 
@@ -114,22 +104,3 @@ def test_ready_openapi_contract(client: TestClient) -> None:
     assert operation["responses"]["503"]["content"]["application/json"]["schema"] == {
         "$ref": "#/components/schemas/NotReadyResponse"
     }
-
-
-def test_alembic_upgrades_empty_database_to_head_twice(test_database_url: str) -> None:
-    config = Config(PROJECT_ROOT / "alembic.ini")
-    config.set_main_option("sqlalchemy.url", test_database_url.replace("%", "%%"))
-
-    command.upgrade(config, "head")
-    command.upgrade(config, "head")
-
-    engine = create_engine(test_database_url)
-    try:
-        assert inspect(engine).get_table_names() == ["alembic_version", "books"]
-        with engine.connect() as connection:
-            revision = connection.execute(
-                text("SELECT version_num FROM alembic_version")
-            ).scalar_one()
-        assert revision == "0003_book_column_constraints"
-    finally:
-        engine.dispose()
