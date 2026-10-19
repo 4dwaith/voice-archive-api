@@ -130,6 +130,6 @@ def test_alembic_upgrades_empty_database_to_head_twice(test_database_url: str) -
             revision = connection.execute(
                 text("SELECT version_num FROM alembic_version")
             ).scalar_one()
-        assert revision == "0001_book_metadata"
+        assert revision == "0003_book_column_constraints"
     finally:
         engine.dispose()
