@@ -62,6 +62,17 @@ docker compose --profile test stop db-test
 The [book feature scenarios](tests/features/books/) are the detailed behavior
 specification. Their [pytest bindings](tests/feature_tests/test_books.py) discover
 all scenarios in that folder; missing steps and failed assertions fail the suite.
+Scenarios prepare book drafts through individual detail-entry steps and submit
+them with explicit save actions. Step definitions translate those drafts into
+HTTP requests. Each scenario (including each outline example) has its own
+function-scoped state, shared by its steps and discarded afterward. Editing
+drafts contain only changes: untouched fields are omitted, while explicitly
+cleared fields are sent as null. Features use book details and user actions;
+wire-format cases such as invalid JSON value types belong in contract tests.
+Outline tables use `Scenarios: All ...` for complete enumerations within the
+named scope and `Examples: Representative ...` for sampled inputs or variations.
+These keywords execute identically; the distinction documents coverage intent
+and does not automatically enforce completeness.
 [Contract tests](tests/contract/test_books.py) cover schemas and HTTP contracts;
 [persistence tests](tests/persistence/test_books.py) cover transactions, constraints,
 and migrations.
