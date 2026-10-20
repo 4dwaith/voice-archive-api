@@ -1,4 +1,4 @@
-"""Discover the executable upload specifications under book_files."""
+"""Discover the executable upload and delivery specifications under book_files."""
 
 from dataclasses import dataclass
 from datetime import datetime, timedelta
@@ -10,7 +10,7 @@ from pytest_bdd import given, parsers, scenarios, then, when
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
-from tests.file_processing.file_samples import cover_bytes, pdf_bytes
+from tests.file_processing.file_samples import cover_bytes, pdf_bytes, pdf_bytes_of_size
 from voice_archive_api.book_files.model import CoverFile, SourcePdfFile
 
 scenarios("../features/book_files")
@@ -30,14 +30,34 @@ def upload():
     return UploadScenario()
 
 
+@dataclass
+class DeliveryScenario:
+    url: str = ""
+    content: bytes = b""
+    response: Response | None = None
+
+
+@pytest.fixture
+def delivery():
+    return DeliveryScenario()
+
+
+def file_api_path(kind):
+    return {"cover": "/api/v1/cover-files", "source PDF": "/api/v1/source-pdf-files"}[kind]
+
+
+COVER_RESPONSE_FIELDS = {"id", "byte_size", "width", "height", "created_at"}
+PDF_RESPONSE_FIELDS = {"id", "byte_size", "page_count", "created_at"}
+
+
 @given("I am uploading a cover")
 def cover_upload(upload):
-    upload.path = "/api/v1/cover-files"
+    upload.path = file_api_path("cover")
 
 
 @given("I am uploading a source PDF")
 def pdf_upload(upload):
-    upload.path = "/api/v1/source-pdf-files"
+    upload.path = file_api_path("source PDF")
 
 
 @given(parsers.parse("I have selected a {format} image"))
@@ -100,9 +120,9 @@ def upload_file(client, upload):
     })
 
 
-def result(upload):
-    assert upload.response is not None
-    return upload.response
+def result(state: UploadScenario | DeliveryScenario) -> Response:
+    assert state.response is not None
+    return state.response
 
 
 def assert_ready_response(upload, expected_fields):
@@ -117,7 +137,7 @@ def assert_ready_response(upload, expected_fields):
 
 @then("the cover is ready to link to a book")
 def ready_cover(test_engine, file_storage, upload):
-    body = assert_ready_response(upload, {"id", "byte_size", "width", "height", "created_at"})
+    body = assert_ready_response(upload, COVER_RESPONSE_FIELDS)
     with Session(test_engine) as db:
         record = db.get(CoverFile, body["id"])
         assert record is not None
@@ -132,7 +152,7 @@ def ready_cover(test_engine, file_storage, upload):
 
 @then("the PDF is ready to link to a book")
 def ready_pdf(test_engine, file_storage, upload):
-    body = assert_ready_response(upload, {"id", "byte_size", "page_count", "created_at"})
+    body = assert_ready_response(upload, PDF_RESPONSE_FIELDS)
     with Session(test_engine) as db:
         record = db.get(SourcePdfFile, body["id"])
         assert record is not None
@@ -169,3 +189,148 @@ def no_file(test_engine, file_storage):
     assert stored_files(file_storage) == {}
 
 
+@given(parsers.re(r"I have uploaded a prepared (?P<kind>cover|source PDF)"))
+def prepare_file(client, file_storage, upload, delivery, kind):
+    upload.path = file_api_path(kind)
+    upload.content = cover_bytes() if kind == "cover" else pdf_bytes()
+    prepare_delivery(client, file_storage, upload, delivery)
+
+
+@given(parsers.parse("I have uploaded a prepared source PDF of {byte_size:d} bytes"))
+def prepare_sized_pdf(client, file_storage, upload, delivery, byte_size):
+    upload.path = file_api_path("source PDF")
+    upload.content = pdf_bytes_of_size(byte_size)
+    prepare_delivery(client, file_storage, upload, delivery)
+    assert len(delivery.content) == byte_size
+
+
+def prepare_delivery(client, file_storage, upload, delivery):
+    upload_file(client, upload)
+    expected_fields = COVER_RESPONSE_FIELDS if upload.path == file_api_path("cover") else PDF_RESPONSE_FIELDS
+    body = assert_ready_response(upload, expected_fields)
+    delivery.url = f"{upload.path}/{body['id']}"
+
+    # Keep actual stored bytes separate from upload input: normalization can
+    # change a cover, and delivery must match the stored representation.
+    stored_contents = list(stored_files(file_storage).values())
+    assert len(stored_contents) == 1
+    delivery.content = stored_contents[0]
+    assert len(delivery.content) == body["byte_size"]
+
+
+@given(parsers.parse("the prepared {kind} is missing"))
+def point_to_missing_file(delivery, kind):
+    path = file_api_path(kind)
+    delivery.url = f"{path}/999999"
+
+
+@given("the stored file has been removed")
+def remove_stored_file(file_storage):
+    for path in file_storage.root.rglob("*"):
+        if path.is_file():
+            path.unlink()
+
+
+@when("I retrieve the prepared file")
+def retrieve_file(client, delivery):
+    delivery.response = client.get(delivery.url)
+
+
+@when("I request the prepared file headers")
+def inspect_file(client, delivery):
+    delivery.response = client.head(delivery.url)
+
+
+@when(parsers.parse("I request bytes from {start} through {end}"))
+def retrieve_range(client, delivery, start, end):
+    size = len(delivery.content)
+
+    def absolute_position(value):
+        if value == "last":
+            return size - 1
+        position = int(value)
+        return size + position if position < 0 else position
+
+    if start.startswith("-") and end == "last":
+        # A suffix requests the final N bytes without specifying an absolute end.
+        range_header = f"bytes={start}"
+    else:
+        first = absolute_position(start)
+        last = "" if end == "last" else str(absolute_position(end))
+        range_header = f"bytes={first}-{last}"
+    delivery.response = client.get(delivery.url, headers={"Range": range_header})
+
+
+@when("I request a range starting beyond the prepared file")
+def retrieve_range_beyond_file(client, delivery):
+    start = len(delivery.content) + 1
+    delivery.response = client.get(delivery.url, headers={"Range": f"bytes={start}-"})
+
+
+@then("the complete prepared file is returned")
+def complete_file(delivery):
+    response = result(delivery)
+    assert response.status_code == 200, response.text
+    assert response.content == delivery.content
+    assert int(response.headers["content-length"]) == len(delivery.content)
+
+
+@then(parsers.parse("delivery headers identify the {kind}"))
+def representation_headers(delivery, kind):
+    headers = result(delivery).headers
+    cover = kind == "cover"
+    assert headers["content-type"] == ("image/webp" if cover else "application/pdf")
+    assert headers["content-disposition"] == f'inline; filename="{"cover.webp" if cover else "source.pdf"}"'
+    assert headers["accept-ranges"] == "bytes"
+    assert headers["etag"]
+    assert headers["last-modified"]
+
+
+@then("the headers describe the complete file without a body")
+def headers_without_body(client, delivery):
+    response = result(delivery)
+    assert response.status_code == 200
+    assert response.content == b""
+    get_headers = client.get(delivery.url).headers
+    for name in ("content-type", "content-length", "content-disposition", "accept-ranges", "etag", "last-modified"):
+        assert response.headers[name] == get_headers[name]
+
+
+@then(parsers.parse("only stored bytes {start:d} through {end:d} are returned"))
+def selected_bytes(delivery, start, end):
+    response = result(delivery)
+    size = len(delivery.content)
+    assert 0 <= start <= end < size
+    assert response.status_code == 206, response.text
+    assert response.content == delivery.content[start:end + 1]
+    assert response.headers["content-range"] == f"bytes {start}-{end}/{size}"
+    assert int(response.headers["content-length"]) == end - start + 1
+    assert response.headers["content-type"] == "application/pdf"
+
+
+@then("I am told that the requested range is outside the file")
+def range_outside_file(delivery):
+    response = result(delivery)
+    assert response.status_code == 416, response.text
+    assert response.content == b""
+
+
+@then("I am told that the requested range is invalid")
+def invalid_range(delivery):
+    response = result(delivery)
+    assert response.status_code == 400, response.text
+    assert response.headers["content-type"].startswith("text/plain")
+    assert response.text
+
+
+@then(parsers.parse("I am told that the {kind} cannot be found"))
+def file_not_found(delivery, kind):
+    response = result(delivery)
+    assert response.status_code == 404, response.text
+    expected_code = {"cover": "cover_file_not_found", "source PDF": "source_pdf_file_not_found"}[kind]
+    assert response.json()["error"]["code"] == expected_code
+
+
+@then("the range error identifies the complete file size")
+def unsatisfiable_size(delivery):
+    assert result(delivery).headers["content-range"] == f"bytes */{len(delivery.content)}"

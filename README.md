@@ -1,8 +1,9 @@
 # Voice Archive API
 
-FastAPI backend for a book library, using Python 3.14, SQLAlchemy, and PostgreSQL 18.
-Currently supports book metadata CRUD and paginated listing. File uploads and
-reading features are not implemented yet. The frontend is a separate project.
+FastAPI backend using Python 3.14, SQLAlchemy, and PostgreSQL 18. Supports book
+CRUD and pagination, optional cover/PDF links, file uploads, and range-enabled
+file delivery. The frontend is a separate project; authentication and automatic
+file cleanup are not implemented yet.
 
 ## Run
 
@@ -14,68 +15,51 @@ Copy-Item .env.example .env
 docker compose up --build -d --wait
 ```
 
-Keep your existing `.env` on subsequent runs. The API starts at
-[localhost:8000](http://localhost:8000); migrations run automatically before startup.
-Re-run the Compose command after code or dependency changes; source hot reload
-is not enabled in the current Compose configuration.
+Keep your existing `.env` on subsequent runs. Migrations run before startup.
+The API starts at [localhost:8000](http://localhost:8000), with interactive
+[API documentation](http://localhost:8000/docs) and the
+[OpenAPI contract](http://localhost:8000/openapi.json). Re-run the Compose command
+after code or dependency changes; Compose does not enable hot reload.
 
-| Endpoint | Purpose |
+| API | Purpose |
 | --- | --- |
-| `/docs` | Interactive API documentation |
-| `/openapi.json` | Generated API contract |
-| `/api/v1/books` | Create and list books |
-| `/api/v1/books/{id}` | Retrieve, patch, or delete a book |
-| `/api/v1/health` | App liveness, without database access |
+| `/api/v1/books` and `/{id}` | Create, list, retrieve, update, and delete books |
+| `/api/v1/cover-files` and `/api/v1/source-pdf-files` | Upload and prepare files |
+| `/api/v1/cover-files/{id}` and `/api/v1/source-pdf-files/{id}` | GET/HEAD delivery with native byte-range support |
+| `/api/v1/health` | Liveness without database access |
 | `/api/v1/ready` | Database readiness; used by Compose |
 
-## Configuration and storage
+Upload files first, then link their returned IDs through an explicit book
+create/save. Covers are normalized to WebP; PDFs retain their original bytes.
+Default input limits are 25 MiB per cover and 1.5 GB per PDF, configurable through
+[.env.example](.env.example).
 
-Compose reads `.env` and injects settings into each container. The application
-reads process environment variables only. Required database credentials use
-`VOICE_ARCHIVE_POSTGRES_USER`, `VOICE_ARCHIVE_POSTGRES_PASSWORD`, and
-`VOICE_ARCHIVE_POSTGRES_DB`; connection URLs are constructed internally.
-See [.env.example](.env.example) for ports, CORS origins, and test credentials.
-Local `.env` is excluded from Git and Docker images.
+## Configuration and data
 
-The stack binds to localhost and uses development credentials. Authentication
-is not implemented. PostgreSQL data lives in the `voice-archive_postgres-data`
-named volume, mounted at `/var/lib/postgresql`.
+Compose reads `.env` and injects process variables; the application does not load
+`.env` itself. See [.env.example](.env.example) for database credentials, ports,
+CORS origins, and upload settings. Local `.env` is excluded from Git and images.
+The stack binds to localhost and uses development credentials.
 
-- `docker compose down` preserves the database.
-- `docker compose down -v` deletes its volume and data.
-- Changing `.env` credentials does not change users in an existing database.
+PostgreSQL uses the `postgres-data` volume; files use `uploads-data`, mounted at
+`/app/uploads`. `docker compose down` preserves both; `docker compose down -v`
+deletes both. Changing `.env` credentials does not update an existing database's
+users.
 
 ## Tests
 
 ```powershell
 docker compose --profile test run --rm --build tests
-```
-
-The full suite runs against a separate PostgreSQL service with temporary storage.
-Database tests create, migrate, and drop isolated databases. Coverage is printed
-in the terminal. Stop the test server afterward with:
-
-```powershell
 docker compose --profile test stop db-test
 ```
 
-The [book feature scenarios](tests/features/books/) are the detailed behavior
-specification. Their [pytest bindings](tests/feature_tests/test_books.py) discover
-all scenarios in that folder; missing steps and failed assertions fail the suite.
-Scenarios prepare book drafts through individual detail-entry steps and submit
-them with explicit save actions. Step definitions translate those drafts into
-HTTP requests. Each scenario (including each outline example) has its own
-function-scoped state, shared by its steps and discarded afterward. Editing
-drafts contain only changes: untouched fields are omitted, while explicitly
-cleared fields are sent as null. Features use book details and user actions;
-wire-format cases such as invalid JSON value types belong in contract tests.
-Outline tables use `Scenarios: All ...` for complete enumerations within the
-named scope and `Examples: Representative ...` for sampled inputs or variations.
-These keywords execute identically; the distinction documents coverage intent
-and does not automatically enforce completeness.
-[Contract tests](tests/contract/test_books.py) cover schemas and HTTP contracts;
-[persistence tests](tests/persistence/test_books.py) cover transactions, constraints,
-and migrations.
+The suite uses a separate PostgreSQL service, isolated databases, and temporary
+file storage. Coverage is printed in the terminal.
+
+- [Features](tests/features/) and [step implementations](tests/feature_tests/): executable behavior specifications.
+- [Contracts](tests/contract/): request/response schemas and OpenAPI declarations.
+- [Database](tests/database/): constraints, transactions, concurrency, and migrations.
+- [File processing](tests/file_processing/) and [HTTP](tests/http/): file preparation/storage and request handling.
 
 To save coverage reports on the host:
 
@@ -85,7 +69,7 @@ docker compose --profile test run --rm -v "./reports:/app/reports" tests pytest 
 
 ## Develop outside Docker
 
-With Python 3.14 and uv installed, use Docker for PostgreSQL and run the API locally:
+With Python 3.14 and uv installed:
 
 ```powershell
 docker compose up -d --wait db
@@ -95,32 +79,23 @@ uv run --env-file .env alembic upgrade head
 uv run --env-file .env uvicorn voice_archive_api.main:app --reload
 ```
 
-Here uv injects `.env` into the process. For PyCharm/IntelliJ, select
-`.venv/Scripts/python.exe`, use this directory as the working directory, and
-configure the runner to inject the same variables. Run module `uvicorn` with
-arguments `voice_archive_api.main:app --reload`.
+uv injects `.env` into the process. For IDE runs, select the `.venv` interpreter,
+use this directory as the working directory, and inject the same environment
+variables.
 
 ## Code and migrations
 
-Under [src/voice_archive_api](src/voice_archive_api/):
+Under [src/voice_archive_api](src/voice_archive_api/), `books/` and `book_files/`
+contain domain models and services; `file_handling/` provides storage and delivery;
+`api/` defines HTTP contracts; `core/` and `db/` provide configuration, dependencies,
+and database resources. `main.py` wires the application together.
 
-- `core/` and `db/`: settings, shared metadata, and session management.
-- `books/`: constants, validation, request/response schemas, model, and CRUD service.
-- `api/`: shared error envelopes, HTTP routes, and book-specific error handlers.
-- `main.py`: application wiring and handler registration.
-
-The service commits explicitly; its `book_write()` context manager rolls back
-failures and translates duplicate-identity violations. PATCH uses Pydantic's
-experimental `MISSING` sentinel to distinguish omission from explicit null.
-
-Schema changes belong in [Alembic migrations](alembic/versions/). Generate a new
-revision on the host so the file stays in the repository:
+Schema changes belong in [Alembic migrations](alembic/versions/). Generate them
+on the host and review before applying:
 
 ```powershell
 uv run --env-file .env alembic revision --autogenerate -m "describe the schema change"
 ```
 
-Review generated migrations before applying them. The migration chain is
-`0001_backend_foundation` → `0002_book_metadata` → `0003_book_column_constraints`.
-Book identity uses a unique digest index; the migration role needs permission to
-install PostgreSQL's bundled `pgcrypto` extension, as provided by local Compose.
+The migration role needs permission to install PostgreSQL's bundled `pgcrypto`
+extension, as provided by local Compose.

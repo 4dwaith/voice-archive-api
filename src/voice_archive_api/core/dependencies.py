@@ -4,6 +4,9 @@ from fastapi import Depends, Request
 
 from voice_archive_api.core.application import ApplicationState
 from voice_archive_api.core.config import Settings
+from voice_archive_api.file_handling import LocalStorage, Storage
+from voice_archive_api.file_handling.file_delivery import FileDelivery
+from voice_archive_api.file_handling.local_file_delivery import LocalFileDelivery
 
 
 def get_app_state(request: Request) -> ApplicationState:
@@ -17,3 +20,17 @@ def get_app_settings(request: Request) -> Settings:
 
 
 AppSettings = Annotated[Settings, Depends(get_app_settings)]
+
+
+def get_file_storage(settings: AppSettings) -> Storage:
+    return LocalStorage(settings.upload_root)
+
+
+FileStorage = Annotated[Storage, Depends(get_file_storage)]
+
+
+def get_file_delivery(settings: AppSettings) -> FileDelivery:
+    return LocalFileDelivery(LocalStorage(settings.upload_root))
+
+
+Delivery = Annotated[FileDelivery, Depends(get_file_delivery)]

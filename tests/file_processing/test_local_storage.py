@@ -6,8 +6,8 @@ from uuid import UUID
 
 import pytest
 
-from voice_archive_api.storage import BinarySource, FileTooLarge, InvalidStorageKey, LocalStorage, Storage
-from voice_archive_api.storage.local import CHUNK_SIZE, STALE_AFTER_SECONDS
+from voice_archive_api.file_handling import BinarySource, FileTooLarge, InvalidStorageKey, LocalStorage, Storage
+from voice_archive_api.file_handling.local_storage import CHUNK_SIZE, STALE_AFTER_SECONDS
 
 
 @pytest.fixture
@@ -128,7 +128,7 @@ def test_write_failure_removes_partial_file(storage):
 
 def test_failed_promotion_preserves_temporary_file(storage):
     temporary = storage.put_temporary(BytesIO(b"valid"), max_bytes=100)
-    with patch("voice_archive_api.storage.local.os.link", side_effect=OSError("failed")):
+    with patch("voice_archive_api.file_handling.local_storage.os.link", side_effect=OSError("failed")):
         with pytest.raises(OSError, match="failed"):
             storage.promote(temporary)
     assert storage.exists(temporary)
@@ -154,7 +154,7 @@ def test_failed_temporary_unlink_rolls_back_promotion(storage):
 
 
 def test_key_collision_never_overwrites_or_deletes_an_existing_file(storage):
-    with patch("voice_archive_api.storage.local.uuid4", return_value=UUID(int=1)):
+    with patch("voice_archive_api.file_handling.local_storage.uuid4", return_value=UUID(int=1)):
         # No collision in temporary
         temporary = storage.put_temporary(BytesIO(b"first"), max_bytes=100)
         with pytest.raises(FileExistsError):
@@ -213,7 +213,7 @@ def test_promotion_links_the_same_file_before_removing_the_temporary_name(storag
         assert source.stat().st_nlink == 2
         assert destination.read_bytes() == b"complete"
 
-    with patch("voice_archive_api.storage.local.os.link", side_effect=observe_link):
+    with patch("voice_archive_api.file_handling.local_storage.os.link", side_effect=observe_link):
         promoted = storage.promote(temporary)
     assert not storage.exists(temporary)
     assert (storage.root / promoted).stat().st_nlink == 1
@@ -231,7 +231,7 @@ def test_promotion_links_the_same_file_before_removing_the_temporary_name(storag
     ],
 )
 def test_invalid_keys_are_rejected_by_every_key_operation(storage, key):
-    for operation in (storage.open, storage.delete, storage.exists, storage.promote):
+    for operation in (storage.open, storage.delete, storage.exists, storage.promote, storage.local_path):
         with pytest.raises(InvalidStorageKey):
             operation(key)
     assert not storage.root.exists()
@@ -257,7 +257,7 @@ def test_symlinks_cannot_redirect_storage_operations(storage, tmp_path, redirect
         pytest.skip(f"Creating symlinks is unavailable: {exc}")
 
     key = "promoted/" + target.name
-    for operation in (storage.open, storage.delete, storage.exists):
+    for operation in (storage.open, storage.delete, storage.exists, storage.local_path):
         with pytest.raises(InvalidStorageKey):
             operation(key)
     assert target.read_bytes() == b"keep"
@@ -288,7 +288,7 @@ def test_clear_stale_preserves_new_temp_files_and_promoted_files(storage):
     for key, timestamp in [(old, cutoff - 1), (boundary, cutoff), (updated, now), (asset, 1)]:
         os.utime(storage.root / key, (timestamp, timestamp))
 
-    with patch("voice_archive_api.storage.local.time", return_value=now):
+    with patch("voice_archive_api.file_handling.local_storage.time", return_value=now):
         assert storage.clear_stale() == 1
         assert storage.clear_stale() == 0
     assert not storage.exists(old)

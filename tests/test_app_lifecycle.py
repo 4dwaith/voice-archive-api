@@ -10,9 +10,8 @@ from fastapi.testclient import TestClient
 from sqlalchemy import Engine
 from sqlalchemy.orm import Session
 
-from voice_archive_api.api.v1.file_uploads import UploadStorage
 from voice_archive_api.core.config import Settings
-from voice_archive_api.core.dependencies import AppSettings
+from voice_archive_api.core.dependencies import AppSettings, FileStorage
 from voice_archive_api.db.session import get_db
 from voice_archive_api.main import create_app
 
@@ -27,7 +26,7 @@ def settings_for(database: str, upload_root: Path) -> Settings:
 
 def add_resource_probe(app: FastAPI) -> None:
     @app.get("/test-resources")
-    def resources(settings: AppSettings, db: Annotated[Session, Depends(get_db)], storage: UploadStorage):
+    def resources(settings: AppSettings, db: Annotated[Session, Depends(get_db)], storage: FileStorage):
         # Inspect the session's bind without opening a database connection.
         engine = db.get_bind()
         assert isinstance(engine, Engine)

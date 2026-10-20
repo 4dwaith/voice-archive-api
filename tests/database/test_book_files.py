@@ -16,7 +16,7 @@ from voice_archive_api.book_files.covers import InvalidImage
 from voice_archive_api.book_files.model import CoverFile, SourcePdfFile
 from voice_archive_api.book_files.pdfs import InvalidPdf
 from voice_archive_api.books.model import Book
-from voice_archive_api.storage import LocalStorage, Storage
+from voice_archive_api.file_handling import LocalStorage, Storage
 
 
 FIRST_BOOK_FILES_REVISION = "0004_book_files"

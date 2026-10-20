@@ -8,7 +8,7 @@ from pypdf import PdfWriter
 from pypdf.errors import DependencyError
 
 from voice_archive_api.book_files.pdfs import EncryptedPdfNotSupported, InvalidPdf, prepare_pdf
-from voice_archive_api.storage import FileTooLarge, LocalStorage
+from voice_archive_api.file_handling import FileTooLarge, LocalStorage
 
 
 @pytest.fixture

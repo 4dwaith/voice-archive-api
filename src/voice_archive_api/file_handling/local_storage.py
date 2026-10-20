@@ -6,7 +6,7 @@ from time import time
 from typing import BinaryIO
 from uuid import uuid4
 
-from voice_archive_api.storage.base import BinarySource, FileTooLarge, InvalidStorageKey
+from voice_archive_api.file_handling.storage import BinarySource, FileTooLarge, InvalidStorageKey
 
 CHUNK_SIZE = 1024 * 1024  # 1 MB
 STALE_AFTER_SECONDS = 24 * 60 * 60
@@ -90,6 +90,14 @@ class LocalStorage:
 
     def open(self, key: str) -> BinaryIO:
         return self._path(key).open("rb")
+
+    def local_path(self, key: str) -> Path:
+        """Resolve a validated key for local file delivery; the file may be absent.
+
+        This is specific to local storage, rather than part of the Storage
+        protocol. Other backends can provide their own delivery adapters.
+        """
+        return self._path(key)
 
     def delete(self, key: str) -> None:
         self._path(key).unlink(missing_ok=True)

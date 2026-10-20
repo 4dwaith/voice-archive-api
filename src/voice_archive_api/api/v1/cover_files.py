@@ -1,19 +1,19 @@
 from typing import Annotated, Literal
 
-from fastapi import APIRouter, Depends, FastAPI, File, Request, UploadFile
+from fastapi import APIRouter, Depends, FastAPI, File, Path, Request, Response, UploadFile
 from fastapi.responses import JSONResponse
 from sqlalchemy.orm import Session
 
 from voice_archive_api.api.errors import ErrorResponse, ValidationErrorResponse
+from voice_archive_api.file_handling.file_delivery import delivery_parameters, delivery_responses
 from voice_archive_api.api.v1.file_uploads import (
     FileUploadErrorResponse,
     UploadRoute,
-    UploadStorage,
 )
 from voice_archive_api.book_files import service
 from voice_archive_api.book_files.covers import InvalidImage, UnsupportedMediaType
 from voice_archive_api.book_files.schemas import CoverFileResponse
-from voice_archive_api.core.dependencies import AppSettings
+from voice_archive_api.core.dependencies import AppSettings, Delivery, FileStorage
 from voice_archive_api.db.session import get_db
 
 
@@ -65,7 +65,45 @@ router = APIRouter(prefix="/cover-files", tags=["Cover files"], route_class=Cove
 )
 def create_cover_file(
     file: Annotated[UploadFile, File(description="JPEG, PNG, or WebP; normalized to a static WebP cover")],
-    db: Annotated[Session, Depends(get_db)], storage: UploadStorage, settings: AppSettings,
+    db: Annotated[Session, Depends(get_db)], storage: FileStorage, settings: AppSettings,
 ):
     """Upload and prepare a cover. Link its returned ID through an explicit book create/save."""
     return service.create_cover_file(db, file.file, storage, max_bytes=settings.cover_max_bytes)
+
+
+FileId = Annotated[int, Path(gt=0, le=9_223_372_036_854_775_807)]
+missing_file = {404: {"model": CoverFileErrorResponse, "description": "Prepared file or stored bytes not found"}}
+invalid_request = {422: {"model": ValidationErrorResponse, "description": "Invalid request"}}
+
+
+@router.get(
+    "/{file_id}", response_class=Response,
+    operation_id="get_api_v1_cover_file",
+    responses=delivery_responses("image/webp") | missing_file | invalid_request,
+    openapi_extra=delivery_parameters,
+)
+def get_cover_file(
+    file_id: FileId, db: Annotated[Session, Depends(get_db, scope="function")], delivery: Delivery,
+):
+    """Retrieve a prepared file, including before linking it to a book.
+
+    Range, If-Range, and file headers follow Starlette's native FileResponse behavior.
+    """
+    record = service.get_cover_file(db, file_id)
+    try:
+        return delivery.response(record.storage_key, media_type="image/webp", filename="cover.webp")
+    except FileNotFoundError as exc:
+        raise service.CoverFileNotFound from exc
+
+
+@router.head(
+    "/{file_id}", response_class=Response,
+    operation_id="head_api_v1_cover_file",
+    responses=delivery_responses("image/webp", head=True) | missing_file | invalid_request,
+    openapi_extra=delivery_parameters,
+)
+def head_cover_file(
+    file_id: FileId, db: Annotated[Session, Depends(get_db, scope="function")], delivery: Delivery,
+):
+    """Return file headers without the body, including native range handling."""
+    return get_cover_file(file_id, db, delivery)

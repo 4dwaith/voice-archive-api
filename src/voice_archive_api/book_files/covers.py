@@ -5,7 +5,7 @@ from typing import BinaryIO, Literal
 
 from PIL import Image, ImageOps, UnidentifiedImageError
 
-from voice_archive_api.storage import BinarySource, Storage
+from voice_archive_api.file_handling import BinarySource, Storage
 
 ACCEPTED_FORMATS = {"JPEG", "PNG", "WEBP"}
 

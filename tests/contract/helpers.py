@@ -3,6 +3,17 @@
 from typing import Any
 
 
+def assert_binary_response_contract(document, path, method, status, media_type, *, additional_media_types=()):
+    response = document["paths"][path][method]["responses"][status]
+    assert response["content"] == {
+        name: {"schema": {"type": "string", "format": "binary"}}
+        for name in (media_type, *additional_media_types)
+    }
+    assert {"Content-Length", "Content-Disposition", "Accept-Ranges", "ETag", "Last-Modified"} <= response["headers"].keys()
+    if status == "206":
+        assert "Content-Range" in response["headers"]
+
+
 def assert_operation_contract(
     document: dict[str, Any],
     path: str,

@@ -4,7 +4,7 @@ from typing import BinaryIO, Literal
 from pypdf import PdfReader
 from pypdf.errors import DependencyError, PyPdfError
 
-from voice_archive_api.storage import BinarySource, Storage
+from voice_archive_api.file_handling import BinarySource, Storage
 
 
 class InvalidPdf(Exception):

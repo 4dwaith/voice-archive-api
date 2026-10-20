@@ -1,8 +1,8 @@
-"""Shared request bounds and dependencies for the two file upload APIs."""
+"""Shared request bounds and errors for the two file upload APIs."""
 
-from typing import Annotated, Literal
+from typing import Literal
 
-from fastapi import Depends, FastAPI, Request
+from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 from fastapi.routing import APIRoute
 from python_multipart.exceptions import MultipartParseError
@@ -11,7 +11,7 @@ from starlette.types import Message
 
 from voice_archive_api.api.errors import ErrorResponse
 from voice_archive_api.core.dependencies import get_app_settings
-from voice_archive_api.storage import FileTooLarge, LocalStorage, Storage
+from voice_archive_api.file_handling import FileTooLarge
 
 MULTIPART_OVERHEAD_BYTES = 64 * 1024
 
@@ -38,13 +38,6 @@ def install_upload_error_handlers(app: FastAPI) -> None:
         }})
 
 
-def upload_storage(request: Request) -> Storage:
-    return LocalStorage(get_app_settings(request).upload_root)
-
-
-UploadStorage = Annotated[Storage, Depends(upload_storage)]
-
-
 class UploadRoute(APIRoute):
     """Bound multipart spooling before FastAPI validates the uploaded file field."""
 
@@ -52,6 +45,8 @@ class UploadRoute(APIRoute):
 
     def get_route_handler(self):
         handler = super().get_route_handler()
+        if "POST" not in self.methods:
+            return handler
 
         async def bounded_upload(request: Request):
             settings = get_app_settings(request)

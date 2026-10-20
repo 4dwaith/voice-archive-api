@@ -14,7 +14,7 @@ from voice_archive_api.core.application import Application
 from voice_archive_api.core.config import Settings
 from voice_archive_api.db.session import create_database_engine, get_db
 from voice_archive_api.main import create_app
-from voice_archive_api.storage import LocalStorage
+from voice_archive_api.file_handling import LocalStorage
 
 
 @pytest.fixture(scope="session")

@@ -7,7 +7,7 @@ from sqlalchemy.orm import Session
 from voice_archive_api.book_files.covers import prepare_cover
 from voice_archive_api.book_files.model import CoverFile, SourcePdfFile
 from voice_archive_api.book_files.pdfs import prepare_pdf
-from voice_archive_api.storage import BinarySource, Storage
+from voice_archive_api.file_handling import BinarySource, Storage
 
 
 class CoverFileNotFound(Exception):

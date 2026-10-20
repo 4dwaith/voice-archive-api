@@ -1,6 +1,6 @@
 import pytest
 
-from .helpers import assert_multipart_file_body_contract, assert_operation_contract
+from .helpers import assert_binary_response_contract, assert_multipart_file_body_contract, assert_operation_contract
 
 
 @pytest.mark.parametrize(
@@ -18,8 +18,16 @@ from .helpers import assert_multipart_file_body_contract, assert_operation_contr
                 "422": ["CoverFileErrorResponse", "ValidationErrorResponse"],
             },
         ),
+        (
+            "/api/v1/cover-files/{file_id}", "get", "get_api_v1_cover_file",
+            {"404": "CoverFileErrorResponse", "416": None, "422": "ValidationErrorResponse"},
+        ),
+        (
+            "/api/v1/cover-files/{file_id}", "head", "head_api_v1_cover_file",
+            {"200": None, "206": None, "400": None, "404": "CoverFileErrorResponse", "416": None, "422": "ValidationErrorResponse"},
+        ),
     ],
-    ids=["create"],
+    ids=["create", "retrieve", "headers"],
 )
 def test_cover_file_operation_contracts(openapi_document, path, method, operation_id, responses):
     assert_operation_contract(openapi_document, path, method, operation_id, responses)
@@ -39,8 +47,16 @@ def test_cover_file_operation_contracts(openapi_document, path, method, operatio
                 "422": ["SourcePdfFileErrorResponse", "ValidationErrorResponse"],
             },
         ),
+        (
+            "/api/v1/source-pdf-files/{file_id}", "get", "get_api_v1_source_pdf_file",
+            {"404": "SourcePdfFileErrorResponse", "416": None, "422": "ValidationErrorResponse"},
+        ),
+        (
+            "/api/v1/source-pdf-files/{file_id}", "head", "head_api_v1_source_pdf_file",
+            {"200": None, "206": None, "400": None, "404": "SourcePdfFileErrorResponse", "416": None, "422": "ValidationErrorResponse"},
+        ),
     ],
-    ids=["create"],
+    ids=["create", "retrieve", "headers"],
 )
 def test_source_pdf_file_operation_contracts(openapi_document, path, method, operation_id, responses):
     assert_operation_contract(openapi_document, path, method, operation_id, responses)
@@ -99,3 +115,36 @@ def test_invalid_upload_request_has_a_documented_error(client, file_storage, pat
         assert response.status_code == 400, response.text
         assert response.json()["error"]["code"] == "invalid_multipart"
     assert not any(path.is_file() for path in file_storage.root.rglob("*"))
+
+
+@pytest.mark.parametrize("path,media_type", [
+    ("/api/v1/cover-files/{file_id}", "image/webp"),
+    ("/api/v1/source-pdf-files/{file_id}", "application/pdf"),
+])
+@pytest.mark.parametrize("status", ["200", "206"])
+def test_file_delivery_binary_contracts(openapi_document, path, media_type, status):
+    assert_binary_response_contract(
+        openapi_document, path, "get", status, media_type,
+        additional_media_types=("multipart/byteranges",) if status == "206" else (),
+    )
+    assert "requestBody" not in openapi_document["paths"][path]["get"]
+
+
+@pytest.mark.parametrize("path", ["/api/v1/cover-files", "/api/v1/source-pdf-files"])
+@pytest.mark.parametrize("method", ["get", "head"])
+@pytest.mark.parametrize("file_id", ["0", "invalid"])
+def test_invalid_delivery_id_has_a_documented_error(client, path, method, file_id):
+    response = client.request(method, f"{path}/{file_id}")
+    assert response.status_code == 422
+    if method == "get":
+        assert response.json()["error"]["code"] == "validation_error"
+    else:
+        assert response.content == b""
+
+
+@pytest.mark.parametrize("path", ["/api/v1/cover-files/{file_id}", "/api/v1/source-pdf-files/{file_id}"])
+def test_delivery_range_errors_document_native_text_response(openapi_document, path):
+    responses = openapi_document["paths"][path]["get"]["responses"]
+    assert responses["400"]["content"] == {"text/plain": {"schema": {"type": "string"}}}
+    assert "content" not in responses["416"]
+    assert "Content-Range" in responses["416"]["headers"]
