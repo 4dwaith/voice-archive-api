@@ -11,7 +11,7 @@ from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from tests.file_processing.file_samples import cover_bytes, pdf_bytes, pdf_bytes_of_size
-from voice_archive_api.book_files.model import CoverFile, SourcePdfFile
+from voice_archive_api.book_files.model import CoverFile, PendingFileDeletion, SourcePdfFile
 
 scenarios("../features/book_files")
 
@@ -334,3 +334,73 @@ def file_not_found(delivery, kind):
 @then("the range error identifies the complete file size")
 def unsatisfiable_size(delivery):
     assert result(delivery).headers["content-range"] == f"bytes */{len(delivery.content)}"
+
+
+def prepared_file_identity(delivery):
+    path, file_id = delivery.url.rsplit("/", 1)
+    is_cover = path == file_api_path("cover")
+    return (CoverFile if is_cover else SourcePdfFile), int(file_id), is_cover
+
+
+@given("the prepared file is linked to a book")
+def link_prepared_file(client, delivery):
+    _, file_id, is_cover = prepared_file_identity(delivery)
+    response = client.post("/api/v1/books", json={
+        "title": "File owner", "language": "en",
+        "cover_file_id" if is_cover else "source_pdf_file_id": file_id,
+    })
+    assert response.status_code == 201, response.text
+
+
+@given("I have deleted the prepared file")
+def already_deleted_file(client, delivery):
+    response = client.delete(delivery.url)
+    assert response.status_code == 204, response.text
+
+
+@when("I delete the prepared file")
+def delete_prepared_file(client, delivery):
+    delivery.response = client.delete(delivery.url)
+
+
+@then("the prepared file is removed and its bytes are queued for deletion")
+def prepared_file_deleted(client, test_engine, delivery):
+    response = result(delivery)
+    assert response.status_code == 204, response.text
+    assert response.content == b""
+    model, file_id, _ = prepared_file_identity(delivery)
+    with Session(test_engine) as db:
+        assert db.get(model, file_id) is None
+        assert db.scalars(select(PendingFileDeletion)).one() is not None
+    assert client.get(delivery.url).status_code == 404
+
+
+@then("the stored bytes remain until maintenance runs")
+def deletion_bytes_preserved(test_engine, file_storage, delivery):
+    with Session(test_engine) as db:
+        pending = db.scalars(select(PendingFileDeletion)).one()
+        with file_storage.open(pending.storage_key) as stream:
+            assert stream.read() == delivery.content
+
+
+@then("I am told that the prepared file is in use by a book")
+def prepared_file_in_use(delivery):
+    response = result(delivery)
+    assert response.status_code == 409, response.text
+    _, _, is_cover = prepared_file_identity(delivery)
+    assert response.json()["error"]["code"] == (
+        "cover_file_already_linked" if is_cover else "source_pdf_file_already_linked"
+    )
+
+
+@then("the prepared file and its book link remain available")
+def linked_file_preserved(client, test_engine, delivery):
+    model, file_id, is_cover = prepared_file_identity(delivery)
+    book = client.get("/api/v1/books").json()["items"][0]
+    assert book["cover_file_id" if is_cover else "source_pdf_file_id"] == file_id
+    response = client.get(delivery.url)
+    assert response.status_code == 200, response.text
+    assert response.content == delivery.content
+    with Session(test_engine) as db:
+        assert db.get(model, file_id) is not None
+        assert db.scalar(select(func.count()).select_from(PendingFileDeletion)) == 0

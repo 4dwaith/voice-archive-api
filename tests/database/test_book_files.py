@@ -13,7 +13,7 @@ from sqlalchemy.orm import Session
 from alembic import command
 from voice_archive_api.book_files import service
 from voice_archive_api.book_files.covers import InvalidImage
-from voice_archive_api.book_files.model import CoverFile, SourcePdfFile
+from voice_archive_api.book_files.model import CoverFile, PendingFileDeletion, SourcePdfFile
 from voice_archive_api.book_files.pdfs import InvalidPdf
 from voice_archive_api.books.model import Book
 from voice_archive_api.file_handling import LocalStorage, Storage
@@ -319,5 +319,24 @@ def test_upgrade_from_first_file_revision_preserves_existing_files(
         assert record is not None
         for field, expected in values.items():
             assert getattr(record, field) == expected, field
+
+
+@pytest.mark.parametrize("kind", ["cover", "source_pdf"])
+def test_failed_explicit_deletion_commit_preserves_file_record_and_bytes(test_engine, storage, kind):
+    with Session(test_engine) as db:
+        record = create_file(db, storage, kind)
+        file_id, storage_key = record.id, record.storage_key
+
+        def interrupt_commit(session):
+            raise RuntimeError("deletion commit interrupted")
+
+        event.listen(db, "before_commit", interrupt_commit)
+        delete_file = service.delete_cover_file if kind == "cover" else service.delete_pdf_file
+        with pytest.raises(RuntimeError, match="deletion commit interrupted"):
+            delete_file(db, file_id)
+    with Session(test_engine) as db:
+        assert db.get(model_for(kind), file_id) is not None
+        assert db.get(PendingFileDeletion, storage_key) is None
+    assert storage.exists(storage_key)
 
 

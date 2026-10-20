@@ -25,7 +25,7 @@ after code or dependency changes; Compose does not enable hot reload.
 | --- | --- |
 | `/api/v1/books` and `/{id}` | Create, list, retrieve, update, and delete books |
 | `/api/v1/cover-files` and `/api/v1/source-pdf-files` | Upload and prepare files |
-| `/api/v1/cover-files/{id}` and `/api/v1/source-pdf-files/{id}` | GET/HEAD delivery with native byte-range support |
+| `/api/v1/cover-files/{id}` and `/api/v1/source-pdf-files/{id}` | GET/HEAD delivery with native byte ranges; DELETE unlinked files |
 | `/api/v1/health` | Liveness without database access |
 | `/api/v1/ready` | Database readiness; used by Compose |
 
@@ -33,6 +33,10 @@ Upload files first, then link their returned IDs through an explicit book
 create/save. Covers are normalized to WebP; PDFs retain their original bytes.
 Default input limits are 25 MiB per cover and 1.5 GB per PDF, configurable through
 [.env.example](.env.example).
+Book responses include nullable `cover_url` and `source_pdf_url` API paths for
+delivery, alongside file IDs used for linking. Deleting an unlinked file returns
+204 and queues its bytes for maintenance; linked files return 409. Missing file
+records return 404.
 
 ## Configuration and data
 

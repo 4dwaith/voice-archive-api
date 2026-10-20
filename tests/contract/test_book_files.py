@@ -26,8 +26,12 @@ from .helpers import assert_binary_response_contract, assert_multipart_file_body
             "/api/v1/cover-files/{file_id}", "head", "head_api_v1_cover_file",
             {"200": None, "206": None, "400": None, "404": "CoverFileErrorResponse", "416": None, "422": "ValidationErrorResponse"},
         ),
+        (
+            "/api/v1/cover-files/{file_id}", "delete", "delete_api_v1_cover_file",
+            {"204": None, "404": "CoverFileErrorResponse", "409": "CoverFileErrorResponse", "422": "ValidationErrorResponse"},
+        ),
     ],
-    ids=["create", "retrieve", "headers"],
+    ids=["create", "retrieve", "headers", "delete"],
 )
 def test_cover_file_operation_contracts(openapi_document, path, method, operation_id, responses):
     assert_operation_contract(openapi_document, path, method, operation_id, responses)
@@ -55,8 +59,12 @@ def test_cover_file_operation_contracts(openapi_document, path, method, operatio
             "/api/v1/source-pdf-files/{file_id}", "head", "head_api_v1_source_pdf_file",
             {"200": None, "206": None, "400": None, "404": "SourcePdfFileErrorResponse", "416": None, "422": "ValidationErrorResponse"},
         ),
+        (
+            "/api/v1/source-pdf-files/{file_id}", "delete", "delete_api_v1_source_pdf_file",
+            {"204": None, "404": "SourcePdfFileErrorResponse", "409": "SourcePdfFileErrorResponse", "422": "ValidationErrorResponse"},
+        ),
     ],
-    ids=["create", "retrieve", "headers"],
+    ids=["create", "retrieve", "headers", "delete"],
 )
 def test_source_pdf_file_operation_contracts(openapi_document, path, method, operation_id, responses):
     assert_operation_contract(openapi_document, path, method, operation_id, responses)
@@ -131,12 +139,12 @@ def test_file_delivery_binary_contracts(openapi_document, path, media_type, stat
 
 
 @pytest.mark.parametrize("path", ["/api/v1/cover-files", "/api/v1/source-pdf-files"])
-@pytest.mark.parametrize("method", ["get", "head"])
+@pytest.mark.parametrize("method", ["get", "head", "delete"])
 @pytest.mark.parametrize("file_id", ["0", "invalid"])
 def test_invalid_delivery_id_has_a_documented_error(client, path, method, file_id):
     response = client.request(method, f"{path}/{file_id}")
     assert response.status_code == 422
-    if method == "get":
+    if method != "head":
         assert response.json()["error"]["code"] == "validation_error"
     else:
         assert response.content == b""

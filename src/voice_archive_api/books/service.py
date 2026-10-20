@@ -29,14 +29,6 @@ class DuplicateBook(Exception):
     pass
 
 
-class CoverFileAlreadyLinked(Exception):
-    pass
-
-
-class SourcePdfFileAlreadyLinked(Exception):
-    pass
-
-
 def get_book(db: Session, book_id: int, *, for_update: bool = False) -> Book:
     book = db.get(Book, book_id, with_for_update=for_update, populate_existing=for_update)
     if book is None:
@@ -75,9 +67,9 @@ def book_write(db: Session) -> Iterator[None]:
                 if constraint == UNIQUE_BOOK_IDENTITY:
                     raise DuplicateBook from exc
                 if constraint == UNIQUE_BOOK_COVER_FILE:
-                    raise CoverFileAlreadyLinked from exc
+                    raise file_service.CoverFileAlreadyLinked from exc
                 if constraint == UNIQUE_BOOK_SOURCE_PDF_FILE:
-                    raise SourcePdfFileAlreadyLinked from exc
+                    raise file_service.SourcePdfFileAlreadyLinked from exc
             if isinstance(exc.orig, ForeignKeyViolation):
                 # A file can disappear after lookup but before the book commits.
                 if constraint == FOREIGN_KEY_BOOK_COVER_FILE:

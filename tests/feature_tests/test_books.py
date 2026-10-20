@@ -23,6 +23,8 @@ class Book(TypedDict):
     description: str | None
     cover_file_id: int | None
     source_pdf_file_id: int | None
+    cover_url: str | None
+    source_pdf_url: str | None
     created_at: str
     updated_at: str
 
@@ -310,6 +312,7 @@ def generated_values(state):
     assert set(book) == {
         "id", "title", "author", "description", "language", "created_at", "updated_at",
         "cover_file_id", "source_pdf_file_id",
+        "cover_url", "source_pdf_url",
     }
 
 
@@ -443,16 +446,29 @@ def link_missing_file(state, kind):
 @then(parsers.re(r'the book links to prepared (?P<kind>cover|source PDF) "(?P<name>[^"]+)"'))
 def linked_to_file(client, state, kind, name):
     field_name = file_id_field(kind)
+    saved = fetch_saved_book(client, state)
     assert result(state).json()[field_name] == state.prepared_file_ids[name]
-    assert fetch_saved_book(client, state)[field_name] == state.prepared_file_ids[name]
+    assert saved[field_name] == state.prepared_file_ids[name]
     listed = next(book for book in fetch_library(client) if book["id"] == state.selected["id"])
     assert listed[field_name] == state.prepared_file_ids[name]
+    url_field = "cover_url" if kind == "cover" else "source_pdf_url"
+    path = "cover-files" if kind == "cover" else "source-pdf-files"
+    expected_url = f"/api/v1/{path}/{state.prepared_file_ids[name]}"
+    for book in (result(state).json(), saved, listed):
+        assert book[url_field] == expected_url
+    delivered = client.get(saved[url_field])
+    assert delivered.status_code == 200, delivered.text
+    assert delivered.headers["content-type"] == ("image/webp" if kind == "cover" else "application/pdf")
 
 
 @then(parsers.re(r'the book has no (?P<kind>cover|source PDF) link'))
 def file_link_absent(client, state, kind):
     assert result(state).json()[file_id_field(kind)] is None
-    assert fetch_saved_book(client, state)[file_id_field(kind)] is None
+    saved = fetch_saved_book(client, state)
+    assert saved[file_id_field(kind)] is None
+    url_field = "cover_url" if kind == "cover" else "source_pdf_url"
+    assert result(state).json()[url_field] is None
+    assert saved[url_field] is None
 
 
 @then(parsers.re(r'the original (?P<kind>cover|source PDF) can no longer be retrieved'))

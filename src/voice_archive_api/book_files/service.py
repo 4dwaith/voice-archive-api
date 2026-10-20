@@ -2,11 +2,13 @@ from collections.abc import Iterator
 from contextlib import contextmanager
 from datetime import UTC, datetime
 
+from sqlalchemy import exists, select
 from sqlalchemy.orm import Session
 
 from voice_archive_api.book_files.covers import prepare_cover
 from voice_archive_api.book_files.model import CoverFile, PendingFileDeletion, SourcePdfFile
 from voice_archive_api.book_files.pdfs import prepare_pdf
+from voice_archive_api.books.model import Book
 from voice_archive_api.file_handling import BinarySource, Storage
 
 
@@ -15,6 +17,14 @@ class CoverFileNotFound(Exception):
 
 
 class SourcePdfFileNotFound(Exception):
+    pass
+
+
+class CoverFileAlreadyLinked(Exception):
+    pass
+
+
+class SourcePdfFileAlreadyLinked(Exception):
     pass
 
 
@@ -36,6 +46,31 @@ def get_pdf_file(db: Session, file_id: int) -> SourcePdfFile:
     if record is None:
         raise SourcePdfFileNotFound
     return record
+
+
+def delete_cover_file(db: Session, file_id: int) -> None:
+    """Delete an unlinked cover record and queue its bytes for maintenance."""
+    _delete_file(db, CoverFile, file_id, Book.cover_file_id, CoverFileNotFound, CoverFileAlreadyLinked)
+
+
+def delete_pdf_file(db: Session, file_id: int) -> None:
+    """Delete an unlinked PDF record and queue its bytes for maintenance."""
+    _delete_file(db, SourcePdfFile, file_id, Book.source_pdf_file_id, SourcePdfFileNotFound, SourcePdfFileAlreadyLinked)
+
+
+def _delete_file(db: Session, model, file_id: int, book_link, not_found, already_linked) -> None:
+    try:
+        # New FK references must wait until deletion commits or rolls back.
+        record = db.get(model, file_id, with_for_update=True, populate_existing=True)
+        if record is None:
+            raise not_found
+        if db.scalar(select(exists().where(book_link == file_id))):
+            raise already_linked
+        queue_file_deletion(db, record, now=datetime.now(UTC))
+        db.commit()
+    except Exception:
+        db.rollback()
+        raise
 
 
 @contextmanager

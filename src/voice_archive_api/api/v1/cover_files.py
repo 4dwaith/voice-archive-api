@@ -18,7 +18,7 @@ from voice_archive_api.db.session import get_db
 
 
 type CoverFileErrorCode = Literal[
-    "cover_file_not_found", "invalid_image", "unsupported_media_type",
+    "cover_file_not_found", "cover_file_already_linked", "invalid_image", "unsupported_media_type",
 ]
 
 
@@ -27,6 +27,12 @@ class CoverFileErrorResponse(ErrorResponse[CoverFileErrorCode]):
 
 
 def install_cover_error_handlers(app: FastAPI) -> None:
+    @app.exception_handler(service.CoverFileAlreadyLinked)
+    async def linked_cover(request: Request, exc: service.CoverFileAlreadyLinked):
+        return JSONResponse(status_code=409, content={"error": {
+            "code": "cover_file_already_linked", "message": "Cover file is already linked to a book",
+        }})
+
     @app.exception_handler(service.CoverFileNotFound)
     async def missing_cover(request: Request, exc: service.CoverFileNotFound):
         return JSONResponse(status_code=404, content={"error": {
@@ -107,3 +113,17 @@ def head_cover_file(
 ):
     """Return file headers without the body, including native range handling."""
     return get_cover_file(file_id, db, delivery)
+
+
+@router.delete(
+    "/{file_id}", status_code=204, response_class=Response,
+    operation_id="delete_api_v1_cover_file",
+    responses=invalid_request | {
+        404: {"model": CoverFileErrorResponse, "description": "Prepared file not found"},
+        409: {"model": CoverFileErrorResponse, "description": "File is linked to a book"},
+    },
+)
+def delete_cover_file(file_id: FileId, db: Annotated[Session, Depends(get_db)]):
+    """Remove an unlinked cover and queue its stored bytes for maintenance."""
+    service.delete_cover_file(db, file_id)
+    return Response(status_code=204)

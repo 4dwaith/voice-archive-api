@@ -137,7 +137,7 @@ def test_cover_claim_by_another_writer_is_rejected(test_engine, monkeypatch, cov
     assert_competing_claim_is_rejected(
         test_engine, monkeypatch, file_id=cover_file_id,
         file_field_key="cover_file_id", get_file="get_cover_file",
-        expected_error=service.CoverFileAlreadyLinked,
+        expected_error=file_service.CoverFileAlreadyLinked,
     )
 
 
@@ -145,7 +145,7 @@ def test_source_pdf_claim_by_another_writer_is_rejected(test_engine, monkeypatch
     assert_competing_claim_is_rejected(
         test_engine, monkeypatch, file_id=source_pdf_file_id,
         file_field_key="source_pdf_file_id", get_file="get_pdf_file",
-        expected_error=service.SourcePdfFileAlreadyLinked,
+        expected_error=file_service.SourcePdfFileAlreadyLinked,
     )
 
 

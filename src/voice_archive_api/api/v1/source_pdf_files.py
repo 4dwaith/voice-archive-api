@@ -18,7 +18,7 @@ from voice_archive_api.db.session import get_db
 
 
 type SourcePdfFileErrorCode = Literal[
-    "source_pdf_file_not_found", "invalid_pdf", "encrypted_pdf_not_supported",
+    "source_pdf_file_not_found", "source_pdf_file_already_linked", "invalid_pdf", "encrypted_pdf_not_supported",
 ]
 
 
@@ -27,6 +27,12 @@ class SourcePdfFileErrorResponse(ErrorResponse[SourcePdfFileErrorCode]):
 
 
 def install_pdf_error_handlers(app: FastAPI) -> None:
+    @app.exception_handler(service.SourcePdfFileAlreadyLinked)
+    async def linked_pdf(request: Request, exc: service.SourcePdfFileAlreadyLinked):
+        return JSONResponse(status_code=409, content={"error": {
+            "code": "source_pdf_file_already_linked", "message": "Source PDF file is already linked to a book",
+        }})
+
     @app.exception_handler(service.SourcePdfFileNotFound)
     async def missing_pdf(request: Request, exc: service.SourcePdfFileNotFound):
         return JSONResponse(status_code=404, content={"error": {
@@ -106,3 +112,17 @@ def head_source_pdf_file(
 ):
     """Return file headers without the body, including native range handling."""
     return get_source_pdf_file(file_id, db, delivery)
+
+
+@router.delete(
+    "/{file_id}", status_code=204, response_class=Response,
+    operation_id="delete_api_v1_source_pdf_file",
+    responses=invalid_request | {
+        404: {"model": SourcePdfFileErrorResponse, "description": "Prepared file not found"},
+        409: {"model": SourcePdfFileErrorResponse, "description": "File is linked to a book"},
+    },
+)
+def delete_source_pdf_file(file_id: FileId, db: Annotated[Session, Depends(get_db)]):
+    """Remove an unlinked PDF and queue its stored bytes for maintenance."""
+    service.delete_pdf_file(db, file_id)
+    return Response(status_code=204)

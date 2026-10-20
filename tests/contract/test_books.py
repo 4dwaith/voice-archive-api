@@ -69,6 +69,14 @@ def test_book_request_body_contracts(openapi_document, path, method, request_mod
     assert_request_body_contract(openapi_document, path, method, request_model)
 
 
+def test_book_contract_documents_nullable_delivery_urls(openapi_document):
+    schema = openapi_document["components"]["schemas"]["BookResponse"]
+    for field in ("cover_url", "source_pdf_url"):
+        assert field in schema["required"]
+        assert schema["properties"][field]["readOnly"] is True
+        assert {item["type"] for item in schema["properties"][field]["anyOf"]} == {"string", "null"}
+
+
 @pytest.mark.parametrize("field", ["title", "language"])
 def test_patch_schema_keeps_non_nullable_fields_omittable(field):
     schema = BookPatch.model_json_schema()

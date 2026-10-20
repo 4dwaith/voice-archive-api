@@ -45,18 +45,6 @@ def install_book_error_handlers(app: FastAPI) -> None:
             },
         )
 
-    @app.exception_handler(service.CoverFileAlreadyLinked)
-    async def linked_cover(request: Request, exc: service.CoverFileAlreadyLinked):
-        return JSONResponse(status_code=409, content={"error": {
-            "code": "cover_file_already_linked", "message": "Cover file is already linked to another book",
-        }})
-
-    @app.exception_handler(service.SourcePdfFileAlreadyLinked)
-    async def linked_pdf(request: Request, exc: service.SourcePdfFileAlreadyLinked):
-        return JSONResponse(status_code=409, content={"error": {
-            "code": "source_pdf_file_already_linked", "message": "Source PDF file is already linked to another book",
-        }})
-
 
 router = APIRouter(
     prefix="/books",

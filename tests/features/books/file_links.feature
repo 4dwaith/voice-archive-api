@@ -1,6 +1,7 @@
 Feature: Link prepared covers and PDFs through an explicit book save
   Files are prepared independently. A book may have either file, both, or neither.
   Each prepared file can be linked to at most one book.
+  Book responses include delivery URLs for linked files; absent links have no URL.
 
   Background:
     Given a prepared cover named "Cover" exists
