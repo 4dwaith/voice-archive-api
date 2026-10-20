@@ -14,6 +14,7 @@ from voice_archive_api.core.application import Application
 from voice_archive_api.core.config import Settings
 from voice_archive_api.db.session import create_database_engine, get_db
 from voice_archive_api.main import create_app
+from voice_archive_api.storage import LocalStorage
 
 
 @pytest.fixture(scope="session")
@@ -82,20 +83,15 @@ def application(test_database_url: str, test_engine: Engine, tmp_path: Path) -> 
         postgres_host=url.host,
         postgres_port=url.port,
         postgres_db=url.database,
-        upload_root=Path("unused-in-metadata-tests"),
+        upload_root=tmp_path / "uploads",
         _env_file=None,
     )
     return create_app(settings)
 
-    def override_get_db() -> Generator[Session]:
-        session = test_session_factory()
-        try:
-            yield session
-        finally:
-            session.close()
 
-    app.dependency_overrides[get_db] = override_get_db
-    return app
+@pytest.fixture
+def file_storage(application: Application) -> LocalStorage:
+    return LocalStorage(application.state.settings.upload_root)
 
 
 @pytest.fixture

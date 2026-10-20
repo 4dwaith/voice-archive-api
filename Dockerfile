@@ -8,8 +8,8 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     TZ=UTC \
     PATH="/app/.venv/bin:$PATH"
 RUN useradd --create-home appuser \
-    && mkdir /app \
-    && chown appuser:appuser /app
+    && mkdir -p /app/uploads \
+    && chown appuser:appuser /app /app/uploads
 USER appuser
 WORKDIR /app
 COPY --chown=appuser pyproject.toml uv.lock .python-version ./
