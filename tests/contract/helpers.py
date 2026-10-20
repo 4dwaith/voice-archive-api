@@ -8,7 +8,7 @@ def assert_operation_contract(
     path: str,
     method: str,
     operation_id: str,
-    responses: dict[str, str | None],
+    responses: dict[str, str | list[str] | None],
 ) -> None:
     """
     Re-usable across APIs. Checks that the operations and responses on the OpenAPI document match the expected values.
@@ -20,6 +20,10 @@ def assert_operation_contract(
         context = f"{method.upper()} {path}: response {status}"
         if model is None:
             assert "content" not in response, context
+        elif isinstance(model, list):
+            assert response["content"]["application/json"]["schema"]["anyOf"] == [
+                {"$ref": f"#/components/schemas/{name}"} for name in model
+            ], context
         else:
             assert response["content"]["application/json"]["schema"] == {
                 "$ref": f"#/components/schemas/{model}"
