@@ -7,6 +7,9 @@ from fastapi.middleware.cors import CORSMiddleware
 from voice_archive_api import __version__
 from voice_archive_api.api.errors import install_error_handlers
 from voice_archive_api.api.v1.books import install_book_error_handlers
+from voice_archive_api.api.v1.cover_files import install_cover_error_handlers
+from voice_archive_api.api.v1.file_uploads import install_upload_error_handlers
+from voice_archive_api.api.v1.source_pdf_files import install_pdf_error_handlers
 from voice_archive_api.api.v1.router import router as v1_router
 from voice_archive_api.core.application import Application
 from voice_archive_api.core.config import Settings
@@ -53,6 +56,9 @@ def create_app(settings: Settings | None = None) -> Application:
     application.include_router(v1_router, prefix="/api/v1")
     install_error_handlers(application)
     install_book_error_handlers(application)
+    install_cover_error_handlers(application)
+    install_pdf_error_handlers(application)
+    install_upload_error_handlers(application)
     return application
 
 

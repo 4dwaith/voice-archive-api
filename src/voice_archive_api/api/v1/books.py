@@ -5,6 +5,8 @@ from fastapi.responses import JSONResponse
 from sqlalchemy.orm import Session
 
 from voice_archive_api.api.errors import ErrorResponse, ValidationErrorResponse
+from voice_archive_api.api.v1.cover_files import CoverFileErrorResponse
+from voice_archive_api.api.v1.source_pdf_files import SourcePdfFileErrorResponse
 from voice_archive_api.books import service
 from voice_archive_api.books.schemas import (
     BookCreate,
@@ -14,7 +16,9 @@ from voice_archive_api.books.schemas import (
 )
 from voice_archive_api.db.session import get_db
 
-type BookErrorCode = Literal["book_not_found", "duplicate_book"]
+type BookErrorCode = Literal[
+    "book_not_found", "duplicate_book", "cover_file_already_linked", "source_pdf_file_already_linked",
+]
 
 
 class BookErrorResponse(ErrorResponse[BookErrorCode]):
@@ -41,6 +45,18 @@ def install_book_error_handlers(app: FastAPI) -> None:
             },
         )
 
+    @app.exception_handler(service.CoverFileAlreadyLinked)
+    async def linked_cover(request: Request, exc: service.CoverFileAlreadyLinked):
+        return JSONResponse(status_code=409, content={"error": {
+            "code": "cover_file_already_linked", "message": "Cover file is already linked to another book",
+        }})
+
+    @app.exception_handler(service.SourcePdfFileAlreadyLinked)
+    async def linked_pdf(request: Request, exc: service.SourcePdfFileAlreadyLinked):
+        return JSONResponse(status_code=409, content={"error": {
+            "code": "source_pdf_file_already_linked", "message": "Source PDF file is already linked to another book",
+        }})
+
 
 router = APIRouter(
     prefix="/books",
@@ -51,8 +67,21 @@ router = APIRouter(
 )
 Database = Annotated[Session, Depends(get_db)]
 BookId = Annotated[int, Path(gt=0, le=9_223_372_036_854_775_807)]
-missing = {404: {"model": BookErrorResponse, "description": "Book not found"}}
-conflict = {409: {"model": BookErrorResponse, "description": "Duplicate title and author"}}
+
+# OpenAPI responses
+missing_book = {404: {"model": BookErrorResponse, "description": "Book not found"}}
+missing_file = {404: {
+    "model": CoverFileErrorResponse | SourcePdfFileErrorResponse,
+    "description": "Referenced prepared file not found",
+}}
+missing_book_or_file = {404: {
+    "model": BookErrorResponse | CoverFileErrorResponse | SourcePdfFileErrorResponse,
+    "description": "Book or referenced prepared file not found",
+}}
+conflict = {409: {
+    "model": BookErrorResponse,
+    "description": "Duplicate title and author, or a cover/PDF already linked to another book",
+}}
 
 
 @router.post(
@@ -60,10 +89,10 @@ conflict = {409: {"model": BookErrorResponse, "description": "Duplicate title an
     status_code=201,
     response_model=BookResponse,
     operation_id="create_api_v1_book",
-    responses=conflict,
+    responses=missing_file | conflict,
 )
 def create_book(payload: BookCreate, db: Database):
-    """Create metadata. Title and language are required; files are added separately."""
+    """Create a book. Title and language are required; prepared cover/PDF IDs are optional."""
     return service.create_book(db, payload)
 
 
@@ -82,7 +111,7 @@ def list_books(
     "/{book_id}",
     response_model=BookResponse,
     operation_id="get_api_v1_book",
-    responses=missing,
+    responses=missing_book,
 )
 def get_book(book_id: BookId, db: Database):
     return service.get_book(db, book_id)
@@ -92,10 +121,13 @@ def get_book(book_id: BookId, db: Database):
     "/{book_id}",
     response_model=BookResponse,
     operation_id="patch_api_v1_book",
-    responses=missing | conflict,
+    responses=missing_book_or_file | conflict,
 )
 def patch_book(book_id: BookId, payload: BookPatch, db: Database):
-    """Update supplied fields. Omission preserves values; only nullable fields accept null."""
+    """Update supplied fields. Omission preserves values; only nullable fields accept null.
+
+    Optional cover/PDF IDs link prepared files; null clears the corresponding link.
+    """
     return service.patch_book(db, book_id, payload)
 
 
@@ -103,7 +135,7 @@ def patch_book(book_id: BookId, payload: BookPatch, db: Database):
     "/{book_id}",
     status_code=204,
     operation_id="delete_api_v1_book",
-    responses=missing,
+    responses=missing_book,
     response_class=Response,
 )
 def delete_book(book_id: BookId, db: Database):
