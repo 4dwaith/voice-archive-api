@@ -8,6 +8,8 @@ import pytest
 from httpx import Response
 from pytest_bdd import given, parsers, scenarios, then, when
 
+from tests.storage.file_samples import cover_bytes, pdf_bytes
+
 scenarios("../features/books")
 
 
@@ -19,6 +21,8 @@ class Book(TypedDict):
     language: str
     author: str | None
     description: str | None
+    cover_file_id: int | None
+    source_pdf_file_id: int | None
     created_at: str
     updated_at: str
 
@@ -33,6 +37,7 @@ class BookScenario:
     original: Book | None = None
     submitted: dict = field(default_factory=dict)
     library_before_save: list[Book] = field(default_factory=list)
+    prepared_file_ids: dict[str, int] = field(default_factory=dict)
     response: Response | None = None
 
 
@@ -303,7 +308,8 @@ def generated_values(state):
         assert datetime.fromisoformat(book[key]).utcoffset().total_seconds() == 0
     assert book["created_at"] == book["updated_at"]
     assert set(book) == {
-        "id", "title", "author", "description", "language", "created_at", "updated_at"
+        "id", "title", "author", "description", "language", "created_at", "updated_at",
+        "cover_file_id", "source_pdf_file_id",
     }
 
 
@@ -388,3 +394,78 @@ def page_contents(state, count, total, skip, size):
     assert len(page["items"]) == count
     expected = list(state.books.values())[skip : skip + size]
     assert page["items"] == expected
+
+
+def file_id_field(kind):
+    return "cover_file_id" if kind == "cover" else "source_pdf_file_id"
+
+
+@given(parsers.re(r'a prepared (?P<kind>cover|source PDF) named "(?P<name>[^"]+)" exists'))
+def seed_file(client, state, kind, name):
+    if kind == "cover":
+        path, filename, content, media_type = "/api/v1/cover-files", "cover.png", cover_bytes(), "image/png"
+    else:
+        path, filename, content, media_type = "/api/v1/source-pdf-files", "source.pdf", pdf_bytes(), "application/pdf"
+    response = client.post(path, files={"file": (filename, content, media_type)})
+    assert response.status_code == 201, response.text
+    state.prepared_file_ids[name] = response.json()["id"]
+
+
+@given(parsers.re(r'I have selected prepared (?P<kind>cover|source PDF) "(?P<name>[^"]+)"'))
+def select_prepared_file(state, kind, name):
+    state.request_draft[file_id_field(kind)] = state.prepared_file_ids[name]
+
+
+@given(parsers.re(
+    r'my library contains "(?P<title>[^"]+)" linked to prepared cover "(?P<cover>[^"]+)" '
+    r'and source PDF "(?P<pdf>[^"]+)"'
+))
+def book_with_files(client, state, title, cover, pdf):
+    response = client.post("/api/v1/books", json={
+        "title": title, "language": "en",
+        "cover_file_id": state.prepared_file_ids[cover],
+        "source_pdf_file_id": state.prepared_file_ids[pdf],
+    })
+    assert response.status_code == 201, response.text
+    state.books[title] = response.json()
+
+
+@given(parsers.re(r'I have cleared the (?P<kind>cover|source PDF) link'))
+def clear_file_link(state, kind):
+    state.request_draft[file_id_field(kind)] = None
+
+
+@given(parsers.re(r'I have selected a missing (?P<kind>cover|source PDF)'))
+def link_missing_file(state, kind):
+    state.request_draft[file_id_field(kind)] = 9_223_372_036_854_775_807
+
+
+@then(parsers.re(r'the book links to prepared (?P<kind>cover|source PDF) "(?P<name>[^"]+)"'))
+def linked_to_file(client, state, kind, name):
+    field_name = file_id_field(kind)
+    assert result(state).json()[field_name] == state.prepared_file_ids[name]
+    assert fetch_saved_book(client, state)[field_name] == state.prepared_file_ids[name]
+    listed = next(book for book in fetch_library(client) if book["id"] == state.selected["id"])
+    assert listed[field_name] == state.prepared_file_ids[name]
+
+
+@then(parsers.re(r'the book has no (?P<kind>cover|source PDF) link'))
+def file_link_absent(client, state, kind):
+    assert result(state).json()[file_id_field(kind)] is None
+    assert fetch_saved_book(client, state)[file_id_field(kind)] is None
+
+
+@then(parsers.re(r'I am told that the (?P<kind>cover|source PDF) file cannot be found'))
+def file_not_found(state, kind):
+    response = result(state)
+    assert response.status_code == 404, response.text
+    prefix = "cover" if kind == "cover" else "source_pdf"
+    assert response.json()["error"]["code"] == f"{prefix}_file_not_found"
+
+
+@then(parsers.re(r'I am told that the (?P<kind>cover|source PDF) file is already linked'))
+def file_already_linked(state, kind):
+    response = result(state)
+    assert response.status_code == 409, response.text
+    prefix = "cover" if kind == "cover" else "source_pdf"
+    assert response.json()["error"]["code"] == f"{prefix}_file_already_linked"
