@@ -60,8 +60,12 @@ def _decode_cover(source: BinaryIO) -> Image.Image:
                     transparent = "A" in oriented.getbands() or "transparency" in oriented.info
                     return oriented.convert("RGBA" if transparent else "RGB")
     except (
-        UnidentifiedImageError, OSError, SyntaxError, ValueError,
-        Image.DecompressionBombWarning, Image.DecompressionBombError,
+        UnidentifiedImageError,
+        OSError,
+        SyntaxError,
+        ValueError,
+        Image.DecompressionBombWarning,
+        Image.DecompressionBombError,
     ) as exc:
         raise InvalidImage from exc
 
@@ -86,8 +90,12 @@ def prepare_cover(source: BinarySource, storage: Storage, *, max_bytes: int) -> 
                     width, height = cover.size
                     try:
                         cover.save(
-                            normalized, "WEBP", quality=85,
-                            exif=b"", icc_profile=b"", xmp=b"",
+                            normalized,
+                            "WEBP",
+                            quality=85,
+                            exif=b"",
+                            icc_profile=b"",
+                            xmp=b"",
                         )
                     except ValueError as exc:
                         # For example, dimensions unsupported by WebP encoding.

@@ -36,15 +36,9 @@ def get_book(db: Session, book_id: int, *, for_update: bool = False) -> Book:
     return book
 
 
-def check_duplicate(
-        db: Session,
-        normalized_title: str,
-        normalized_author: str,
-        exclude_id: int | None = None
-) -> None:
+def check_duplicate(db: Session, normalized_title: str, normalized_author: str, exclude_id: int | None = None) -> None:
     query = select(Book.id).where(
-        Book.normalized_title == normalized_title,
-        Book.normalized_author == normalized_author
+        Book.normalized_title == normalized_title, Book.normalized_author == normalized_author
     )
     if exclude_id is not None:
         query = query.where(Book.id != exclude_id)
@@ -60,9 +54,9 @@ def book_write(db: Session) -> Iterator[None]:
     except Exception as exc:
         db.rollback()
         if isinstance(exc, IntegrityError):
-            constraint = exc.orig.diag.constraint_name if isinstance(
-                exc.orig, (UniqueViolation, ForeignKeyViolation)
-            ) else None
+            constraint = (
+                exc.orig.diag.constraint_name if isinstance(exc.orig, (UniqueViolation, ForeignKeyViolation)) else None
+            )
             if isinstance(exc.orig, UniqueViolation):
                 if constraint == UNIQUE_BOOK_IDENTITY:
                     raise DuplicateBook from exc
@@ -87,9 +81,7 @@ def check_file_links(db: Session, changes: dict) -> None:
         file_service.get_pdf_file(db, pdf_id)
 
 
-def list_books(
-        db: Session, *, limit: int = 50, offset: int = 0
-) -> tuple[list[Book], int]:
+def list_books(db: Session, *, limit: int = 50, offset: int = 0) -> tuple[list[Book], int]:
     if not 1 <= limit <= 100 or offset < 0:
         raise ValueError("limit must be 1..100 and offset must be nonnegative")
     query = select(Book).order_by(Book.id.asc())

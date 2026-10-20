@@ -20,6 +20,10 @@ class LocalFileDelivery(FileDelivery):
         # Resolve missing files before response execution, while route handlers
         # can still translate the failure to the corresponding file-not-found error.
         return FileResponse(
-            path, stat_result=info, media_type=media_type, filename=filename,
-            content_disposition_type="inline", headers={"X-Content-Type-Options": "nosniff"},
+            path,
+            stat_result=info,
+            media_type=media_type,
+            filename=filename,
+            content_disposition_type="inline",
+            headers={"X-Content-Type-Options": "nosniff"},
         )

@@ -26,6 +26,7 @@ class CleanupScenario:
     file: CoverFile | SourcePdfFile | None = None
     book_id: int | None = None
     temporary_key: str | None = None
+    orphan_key: str | None = None
     result: subprocess.CompletedProcess | None = None
 
 
@@ -137,6 +138,29 @@ def temporary_upload(storage, state, hours):
 def run_maintenance(cli_environment, state, job):
     command = [sys.executable, "-m", "voice_archive_api.maintenance", "--once", "--job", job]
     state.result = subprocess.run(command, env=cli_environment, capture_output=True, text=True, timeout=30)
+
+
+@given(parsers.parse("a file without a database record inactive for {days:d} days"))
+def orphaned_file(storage, state, days):
+    state.orphan_key = storage.promote(storage.put_temporary(BytesIO(b"orphaned file"), max_bytes=100))
+    timestamp = (datetime.now(UTC) - timedelta(days=days)).timestamp()
+    os.utime(storage.local_path(state.orphan_key), (timestamp, timestamp))
+
+
+@given(parsers.parse("the uploaded file is inactive for {days:d} days"))
+def age_uploaded_file(storage, state, days):
+    timestamp = (datetime.now(UTC) - timedelta(days=days)).timestamp()
+    os.utime(storage.local_path(state.file.storage_key), (timestamp, timestamp))
+
+
+@then("the orphaned file is removed")
+def orphan_removed(storage, state):
+    assert not storage.exists(state.orphan_key)
+
+
+@then("the orphaned file remains available")
+def orphan_preserved(storage, state):
+    assert storage.exists(state.orphan_key)
 
 
 @then("maintenance succeeds")

@@ -1,6 +1,8 @@
 import os
 import re
 import stat
+from collections.abc import Generator
+from datetime import datetime
 from pathlib import Path
 from time import time
 from typing import BinaryIO
@@ -32,11 +34,7 @@ class LocalStorage:
             raise InvalidStorageKey("Invalid storage key")
         path = self.root / key
         # Reject redirected namespaces as well as individual symlinked files.
-        if (
-            path.parent.is_symlink()
-            or path.is_symlink()
-            or not path.resolve().is_relative_to(self.root)
-        ):
+        if path.parent.is_symlink() or path.is_symlink() or not path.resolve().is_relative_to(self.root):
             raise InvalidStorageKey("Storage key points outside its namespace")
         return path
 
@@ -120,7 +118,6 @@ class LocalStorage:
             return 0
 
         for entry in entries:
-
             if KEY_PATTERN.fullmatch(f"temporary/{entry.name}") is None:
                 continue
 
@@ -135,3 +132,28 @@ class LocalStorage:
                 continue
 
         return removed
+
+    def iter_promoted(self, *, before: datetime) -> Generator[str]:
+        folder = self.root / "promoted"
+        if folder.is_symlink() or not folder.resolve().is_relative_to(self.root):
+            raise InvalidStorageKey("Promoted folder points outside storage")
+        cutoff = before.timestamp()
+        # Inefficient: every run scans all promoted files, including previously checked ones.
+        # Date-partitioned promotion folders plus a saved completed-date boundary could
+        # restrict scans to newly eligible folders. Deferred: moving to object storage
+        # could make this filesystem-specific optimization wasted effort.
+        try:
+            entries = os.scandir(folder)
+        except FileNotFoundError:
+            return
+        with entries:
+            for entry in entries:
+                key = f"promoted/{entry.name}"
+                if KEY_PATTERN.fullmatch(key) is None:
+                    continue
+                try:
+                    info = entry.stat(follow_symlinks=False)
+                except FileNotFoundError:
+                    continue
+                if stat.S_ISREG(info.st_mode) and info.st_mtime < cutoff:
+                    yield key

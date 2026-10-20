@@ -1,11 +1,12 @@
-"""Expire abandoned prepared files and retry pending deletions."""
+"""Expire abandoned file records, delete orphan bytes, and retry pending deletions."""
 
 import logging
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
+from itertools import islice
 
-from sqlalchemy import exists, select, tuple_
-from sqlalchemy.orm import Session, sessionmaker
+from sqlalchemy import exists, select, tuple_, union_all
+from sqlalchemy.orm import InstrumentedAttribute, Session, sessionmaker
 
 from voice_archive_api.book_files.model import CoverFile, FileCleanupProgress, PendingFileDeletion, SourcePdfFile
 from voice_archive_api.book_files.service import queue_file_deletion
@@ -29,10 +30,11 @@ def queue_expired_files(factory: sessionmaker[Session], now: datetime) -> int:
     """Scan indexed age windows, retaining one day of overlap for late commits."""
     total = 0
     cutoff = now - UNLINKED_RETENTION
-    for model, link, boundary_field in (
+    scans: tuple[tuple[type[CoverFile] | type[SourcePdfFile], InstrumentedAttribute[int | None], str], ...] = (
         (CoverFile, Book.cover_file_id, "cover_cleanup_before"),
         (SourcePdfFile, Book.source_pdf_file_id, "source_pdf_cleanup_before"),
-    ):
+    )
+    for model, link, boundary_field in scans:
         linked_to_book = exists(select(Book.id).where(link == model.id))
         conditions = [model.created_at < cutoff, ~linked_to_book]  # Older than the cut-off, and not linked to any books
         with factory() as db:
@@ -58,10 +60,11 @@ def queue_expired_files(factory: sessionmaker[Session], now: datetime) -> int:
 
                 # Select one batch of records - limited by batch size, offset by the cursor,
                 # skipping anything that's currently being modified by the application
-                records = list(db.scalars(
-                    query.order_by(model.created_at, model.id).limit(BATCH_SIZE)
-                    .with_for_update(skip_locked=True)
-                ))
+                records = list(
+                    db.scalars(
+                        query.order_by(model.created_at, model.id).limit(BATCH_SIZE).with_for_update(skip_locked=True)
+                    )
+                )
 
                 if not records:
                     # All records in the database which were eligible for delete have been deleted
@@ -83,9 +86,7 @@ def queue_expired_files(factory: sessionmaker[Session], now: datetime) -> int:
                 # Recheck the whole locked batch in one fresh READ COMMITTED query.
                 # The row is locked with FOR UPDATE which prevents any foreign key references,
                 # but it's possible that the row was linked to after the condition was met, but before we acquired the lock.
-                linked_ids = set(db.scalars(
-                    select(link).where(link.in_([record.id for record in records]))
-                ))
+                linked_ids = set(db.scalars(select(link).where(link.in_([record.id for record in records]))))
 
                 for record in records:
                     if record.id in linked_ids:
@@ -108,11 +109,15 @@ def delete_pending_files(factory: sessionmaker[Session], storage: Storage) -> tu
     cursor = ""
     while True:
         with factory.begin() as db:
-            pending = list(db.scalars(
-                select(PendingFileDeletion).where(PendingFileDeletion.storage_key > cursor)
-                .order_by(PendingFileDeletion.storage_key).limit(BATCH_SIZE)
-                .with_for_update(skip_locked=True)
-            ))
+            pending = list(
+                db.scalars(
+                    select(PendingFileDeletion)
+                    .where(PendingFileDeletion.storage_key > cursor)
+                    .order_by(PendingFileDeletion.storage_key)
+                    .limit(BATCH_SIZE)
+                    .with_for_update(skip_locked=True)
+                )
+            )
             if not pending:
                 break
             for record in pending:
@@ -121,7 +126,9 @@ def delete_pending_files(factory: sessionmaker[Session], storage: Storage) -> tu
                     storage.delete(record.storage_key)
                 except Exception:
                     failures += 1
-                    logger.exception("File deletion failed; retaining pending deletion for retry: %s", record.storage_key)
+                    logger.exception(
+                        "File deletion failed; retaining pending deletion for retry: %s", record.storage_key
+                    )
                 else:
                     db.delete(record)
                     deleted += 1
@@ -132,11 +139,68 @@ def delete_pending_files(factory: sessionmaker[Session], storage: Storage) -> tu
 
 
 def run_promoted_cleanup(
-    factory: sessionmaker[Session], storage: Storage, *, now: datetime | None = None,
+    factory: sessionmaker[Session],
+    storage: Storage,
+    *,
+    now: datetime | None = None,
 ) -> CleanupResult:
     result = CleanupResult()
     result.prepared_files_expired = queue_expired_files(factory, now or datetime.now(UTC))
     result.files_deleted, failures = delete_pending_files(factory, storage)
     result.failures += failures
     logger.info("Promoted-file cleanup completed: %s", result)
+    return result
+
+
+def delete_orphan_files(factory: sessionmaker[Session], storage: Storage, now: datetime) -> tuple[int, int]:
+    """Delete aged promoted bytes absent from both file tables, in bounded batches.
+
+    Promoted keys are immutable and never reused. The seven-day grace period
+    protects the short promotion-to-database-commit window of an active upload.
+    Database lookup failures abort deletion of that batch. Failed deletes are
+    rediscovered by the next full scan.
+    """
+    deleted = failures = 0
+    candidates = storage.iter_promoted(before=now - UNLINKED_RETENTION)
+    try:
+        while True:
+            batch = list(islice(candidates, BATCH_SIZE))
+            if not batch:
+                break
+            # Check BOTH file tables immediately before deleting this batch.
+            # No full-table key set or per-file database query is needed.
+            with factory() as db:
+                referenced = set(
+                    db.scalars(
+                        union_all(
+                            select(CoverFile.storage_key).where(CoverFile.storage_key.in_(batch)),
+                            select(SourcePdfFile.storage_key).where(SourcePdfFile.storage_key.in_(batch)),
+                        )
+                    )
+                )
+            for key in batch:
+                if key in referenced:
+                    continue
+                try:
+                    storage.delete(key)
+                except Exception:
+                    failures += 1
+                    logger.exception("Orphan file deletion failed; will retry next scan: %s", key)
+                else:
+                    deleted += 1
+    finally:
+        # Local enumeration holds a directory handle; close it on database failure too.
+        candidates.close()
+    return deleted, failures
+
+
+def run_orphan_cleanup(
+    factory: sessionmaker[Session],
+    storage: Storage,
+    *,
+    now: datetime | None = None,
+) -> CleanupResult:
+    result = CleanupResult()
+    result.files_deleted, result.failures = delete_orphan_files(factory, storage, now or datetime.now(UTC))
+    logger.info("Orphan-file cleanup completed: %s", result)
     return result

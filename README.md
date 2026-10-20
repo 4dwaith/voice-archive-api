@@ -44,22 +44,57 @@ Compose reads `.env` and injects process variables; the application does not loa
 `.env` itself. See [.env.example](.env.example) for database credentials, ports,
 CORS origins, and upload settings. Local `.env` is excluded from Git and images.
 The stack binds to localhost and uses development credentials.
+Public-network deployment is blocked until authentication and authorization are
+designed. Keep the supported Compose ports bound to loopback; CORS is not access
+control. No authentication implementation is scheduled in the current reader phases.
 
 PostgreSQL uses the `postgres-data` volume; files use `uploads-data`, mounted at
 `/app/uploads`. `docker compose down` preserves both; `docker compose down -v`
 deletes both. Changing `.env` credentials does not update an existing database's
 users.
 
-The `maintenance` service runs two independent jobs at startup and daily at
-midnight UTC: one removes temporary files inactive for 24 hours; the other
-removes unlinked prepared files older than seven days and retries pending
-deletions. Replacing/clearing a book's file or deleting its book removes the file
-record and queues its bytes for maintenance. Failed file deletions are retried
-on later runs. For an immediate run:
+The `maintenance` service runs three independent jobs at startup and daily at
+midnight UTC. Scheduled jobs may run concurrently:
+
+- `temporary`: removes temporary files inactive for 24 hours.
+- `promoted`: removes unlinked prepared-file records older than seven days and
+  retries queued byte deletions. Replacing/clearing a book's file or deleting its
+  book queues its bytes in the same database transaction.
+- `orphan`: scans all regular promoted files, checking their keys against
+  both file tables in bounded batches. Bytes last modified strictly more than
+  seven days ago with no file record are deleted. Database lookup failures abort
+  deletion of that batch; failed deletes are rediscovered on the next scan.
+
+The grace period protects uploads between promotion and database commit. Files
+are immutable after promotion; operators must not reuse keys or restore old
+files into active storage while orphan cleanup runs. This recovers orphan bytes
+after crashes or failed immediate cleanup; filesystem and PostgreSQL writes are
+not one atomic transaction. Full-directory scans are intentional for now; an
+incremental filesystem layout is deferred pending possible object storage.
+
+For an immediate run:
 `docker compose run --rm --no-deps maintenance python -m voice_archive_api.maintenance --once`.
-Use `--once --job temporary` or `--once --job promoted` to run just one job.
-The default `--job all` runs both sequentially, attempting each even if the other
-fails. Without `--once`, the selected jobs run independently on their schedules.
+Use `--once --job temporary`, `--job promoted`, or `--job orphan` to select
+one job. The default `--job all` runs all three sequentially, attempting each even
+if another fails. Without `--once`, selected jobs run independently on their schedules.
+
+## Errors, request IDs, and OpenAPI
+
+Application errors use `{"error":{"code":"...","message":"..."}}`; validation
+errors also include `issues`. Unexpected errors return a generic `internal_error`
+500. Native file-range errors and the readiness response retain their existing
+contracts. HEAD responses have no body.
+
+`asgi-correlation-id` assigns an `X-Request-ID` to every request, including errors
+and CORS preflights. Valid incoming UUID4 identifiers are reused; absent/invalid
+ones are replaced. CORS exposes the response header. Logging filters add the ID
+to application and Uvicorn logs; outside requests it is `-`. Application error
+logs record exception type and stack locations without exception text, source
+statements, locals, or uploaded bodies. SQLAlchemy hides bound parameters.
+
+The live `/openapi.json` is the frontend generation input. There is no committed
+schema snapshot, export command, or stale-artifact check. Contract tests verify
+operation IDs, error schemas, multipart/binary responses, nullability, and limits.
 
 ## Tests
 
@@ -81,6 +116,20 @@ To save coverage reports on the host:
 ```powershell
 docker compose --profile test run --rm -v "./reports:/app/reports" tests pytest --cov=voice_archive_api --cov-report=term-missing --cov-report=html:reports/htmlcov --cov-report=xml:reports/coverage.xml
 ```
+
+For one quality command using the same test environment:
+
+```powershell
+docker compose --profile test run --rm --build -v "./reports:/app/reports" tests python -m voice_archive_api.quality
+```
+
+This checks application-source formatting, lints source/tests/migrations, checks
+application types, and runs the PostgreSQL suite. Combined statement/branch
+coverage must reach 90%; reports are written to `reports/htmlcov/index.html` and
+`reports/coverage.xml`. No CI setup or application database is required. Format
+on the host with `uv run ruff format src`; individual checks are `uv run ruff
+format --check src`, `uv run ruff check src tests alembic`, and `uv run mypy`.
+Historical tests and migrations are linted without requiring reformatting.
 
 ## Develop outside Docker
 

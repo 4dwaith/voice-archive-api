@@ -12,5 +12,5 @@ convention = {
 
 class Base(DeclarativeBase):
     """Single SQLAlchemy model registry used by the app and Alembic."""
-    metadata = MetaData(naming_convention=convention)
 
+    metadata = MetaData(naming_convention=convention)

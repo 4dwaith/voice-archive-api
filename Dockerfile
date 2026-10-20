@@ -19,7 +19,7 @@ FROM base AS test
 RUN uv sync --locked --no-install-project
 
 # File copying repeated since the install layer is different for different stages
-COPY --chown=appuser README.md alembic.ini .env.example ./
+COPY --chown=appuser README.md alembic.ini .env.example compose.yaml ./
 COPY --chown=appuser src ./src
 COPY --chown=appuser alembic ./alembic
 COPY --chown=appuser tests ./tests

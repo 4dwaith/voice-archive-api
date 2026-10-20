@@ -83,12 +83,12 @@ class BookResponse(BaseModel):
     created_at: datetime
     updated_at: datetime
 
-    @computed_field(description="API delivery URL for the linked cover, relative to this origin")
+    @computed_field(description="API delivery URL for the linked cover, relative to this origin")  # type: ignore[prop-decorator]
     @property
     def cover_url(self) -> str | None:
         return f"/api/v1/cover-files/{self.cover_file_id}" if self.cover_file_id is not None else None
 
-    @computed_field(description="API delivery URL for the linked source PDF, relative to this origin")
+    @computed_field(description="API delivery URL for the linked source PDF, relative to this origin")  # type: ignore[prop-decorator]
     @property
     def source_pdf_url(self) -> str | None:
         return f"/api/v1/source-pdf-files/{self.source_pdf_file_id}" if self.source_pdf_file_id is not None else None

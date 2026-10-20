@@ -1,4 +1,4 @@
-from typing import Annotated, Literal
+from typing import Annotated, Any, Literal
 
 from fastapi import APIRouter, Depends, FastAPI, Path, Query, Request, Response
 from fastapi.responses import JSONResponse
@@ -17,7 +17,10 @@ from voice_archive_api.books.schemas import (
 from voice_archive_api.db.session import get_db
 
 type BookErrorCode = Literal[
-    "book_not_found", "duplicate_book", "cover_file_already_linked", "source_pdf_file_already_linked",
+    "book_not_found",
+    "duplicate_book",
+    "cover_file_already_linked",
+    "source_pdf_file_already_linked",
 ]
 
 
@@ -57,19 +60,25 @@ Database = Annotated[Session, Depends(get_db)]
 BookId = Annotated[int, Path(gt=0, le=9_223_372_036_854_775_807)]
 
 # OpenAPI responses
-missing_book = {404: {"model": BookErrorResponse, "description": "Book not found"}}
-missing_file = {404: {
-    "model": CoverFileErrorResponse | SourcePdfFileErrorResponse,
-    "description": "Referenced prepared file not found",
-}}
-missing_book_or_file = {404: {
-    "model": BookErrorResponse | CoverFileErrorResponse | SourcePdfFileErrorResponse,
-    "description": "Book or referenced prepared file not found",
-}}
-conflict = {409: {
-    "model": BookErrorResponse,
-    "description": "Duplicate title and author, or a cover/PDF already linked to another book",
-}}
+missing_book: dict[int | str, dict[str, Any]] = {404: {"model": BookErrorResponse, "description": "Book not found"}}
+missing_file: dict[int | str, dict[str, Any]] = {
+    404: {
+        "model": CoverFileErrorResponse | SourcePdfFileErrorResponse,
+        "description": "Referenced prepared file not found",
+    }
+}
+missing_book_or_file: dict[int | str, dict[str, Any]] = {
+    404: {
+        "model": BookErrorResponse | CoverFileErrorResponse | SourcePdfFileErrorResponse,
+        "description": "Book or referenced prepared file not found",
+    }
+}
+conflict: dict[int | str, dict[str, Any]] = {
+    409: {
+        "model": BookErrorResponse,
+        "description": "Duplicate title and author, or a cover/PDF already linked to another book",
+    }
+}
 
 
 @router.post(
@@ -86,9 +95,9 @@ def create_book(payload: BookCreate, db: Database):
 
 @router.get("", response_model=BookList, operation_id="list_api_v1_books")
 def list_books(
-        db: Database,
-        limit: Annotated[int, Query(ge=1, le=100)] = 50,
-        offset: Annotated[int, Query(ge=0, le=9_223_372_036_854_775_807)] = 0,
+    db: Database,
+    limit: Annotated[int, Query(ge=1, le=100)] = 50,
+    offset: Annotated[int, Query(ge=0, le=9_223_372_036_854_775_807)] = 0,
 ):
     """List books in ascending ID order, with a bounded page and total count."""
     items, total = service.list_books(db, limit=limit, offset=offset)

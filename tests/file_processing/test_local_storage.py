@@ -1,4 +1,5 @@
 import os
+from datetime import UTC, datetime
 from io import BytesIO
 from pathlib import Path
 from unittest.mock import patch
@@ -9,6 +10,7 @@ import pytest
 from voice_archive_api.file_handling import BinarySource, FileTooLarge, InvalidStorageKey, LocalStorage, Storage
 from voice_archive_api.file_handling.local_storage import CHUNK_SIZE, STALE_AFTER_SECONDS
 
+SCAN_CUTOFF = datetime(2026, 10, 14, tzinfo=UTC)
 
 @pytest.fixture
 def storage(tmp_path: Path) -> LocalStorage:
@@ -370,3 +372,38 @@ def test_streaming_writes_refresh_activity_before_the_writer_closes(storage):
 
     key = storage.put_temporary(ObservingSource(), max_bytes=100)
     assert storage.exists(key)
+
+
+def test_missing_promoted_folder_is_an_empty_scan(storage):
+    assert list(storage.iter_promoted(before=SCAN_CUTOFF)) == []
+
+
+def test_promoted_scan_ignores_unknown_files_directories_and_recent_files(storage):
+    old = storage.promote(storage.put_temporary(BytesIO(b"old"), max_bytes=100))
+    boundary = storage.promote(storage.put_temporary(BytesIO(b"boundary"), max_bytes=100))
+    os.utime(storage.local_path(old), (1, 1))
+    os.utime(storage.local_path(boundary), (SCAN_CUTOFF.timestamp(), SCAN_CUTOFF.timestamp()))
+    folder = storage.root / "promoted"
+    (folder / "unknown.txt").write_bytes(b"keep")
+    (folder / ("a" * 32)).mkdir()
+    assert list(storage.iter_promoted(before=SCAN_CUTOFF)) == [old]
+
+
+@pytest.mark.parametrize("redirect_namespace", [False, True])
+def test_promoted_scan_never_follows_symlinks(storage, tmp_path, redirect_namespace):
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    target = outside / ("b" * 32)
+    target.write_bytes(b"keep")
+    os.utime(target, (1, 1))
+    storage.root.mkdir()
+    namespace = storage.root / "promoted"
+    if redirect_namespace:
+        namespace.symlink_to(outside, target_is_directory=True)
+        with pytest.raises(InvalidStorageKey):
+            list(storage.iter_promoted(before=SCAN_CUTOFF))
+    else:
+        namespace.mkdir()
+        (namespace / target.name).symlink_to(target)
+        assert list(storage.iter_promoted(before=SCAN_CUTOFF)) == []
+    assert target.read_bytes() == b"keep"

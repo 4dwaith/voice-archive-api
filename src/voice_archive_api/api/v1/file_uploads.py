@@ -27,15 +27,27 @@ class FileUploadErrorResponse(ErrorResponse[Literal["file_too_large", "invalid_m
 def install_upload_error_handlers(app: FastAPI) -> None:
     @app.exception_handler(FileTooLarge)
     async def too_large(request: Request, exc: FileTooLarge):
-        return JSONResponse(status_code=413, content={"error": {
-            "code": "file_too_large", "message": "Upload exceeds the configured size limit",
-        }})
+        return JSONResponse(
+            status_code=413,
+            content={
+                "error": {
+                    "code": "file_too_large",
+                    "message": "Upload exceeds the configured size limit",
+                }
+            },
+        )
 
     @app.exception_handler(InvalidMultipart)
     async def invalid_multipart(request: Request, exc: InvalidMultipart):
-        return JSONResponse(status_code=400, content={"error": {
-            "code": "invalid_multipart", "message": "Expected a multipart upload with one file field named 'file'",
-        }})
+        return JSONResponse(
+            status_code=400,
+            content={
+                "error": {
+                    "code": "invalid_multipart",
+                    "message": "Expected a multipart upload with one file field named 'file'",
+                }
+            },
+        )
 
 
 class UploadRoute(APIRoute):

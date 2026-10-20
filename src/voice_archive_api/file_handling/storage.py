@@ -1,3 +1,5 @@
+from collections.abc import Generator
+from datetime import datetime
 from typing import BinaryIO, Protocol
 
 
@@ -44,13 +46,19 @@ class Storage(Protocol):
         """Remove a file; already absent files are a successful no-op."""
         ...
 
-    def exists(self, key: str) -> bool:
-        ...
+    def exists(self, key: str) -> bool: ...
 
     def clear_stale(self) -> int:
         """Delete temporary files last updated more than 24 hours ago.
 
         Promoted assets are never touched. Return the number of files removed.
         Calling/scheduling this maintenance operation is the application's job.
+        """
+        ...
+
+    def iter_promoted(self, *, before: datetime) -> Generator[str]:
+        """Yield regular promoted files last modified strictly before the cutoff.
+
+        Enumeration must be bounded in memory and ignore symlinks/unknown files.
         """
         ...

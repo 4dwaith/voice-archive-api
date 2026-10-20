@@ -8,6 +8,14 @@ from voice_archive_api.books.schemas import BookCreate, BookPatch
 from .helpers import assert_operation_contract, assert_request_body_contract
 
 
+@pytest.mark.parametrize("model", ["BookCreate", "BookPatch", "BookResponse"])
+@pytest.mark.parametrize("field,limit", [("title", 750), ("author", 450), ("description", 15_000)])
+def test_openapi_preserves_unicode_length_constraints(openapi_document, model, field, limit):
+    prop = openapi_document["components"]["schemas"][model]["properties"][field]
+    text = next(branch for branch in prop.get("anyOf", [prop]) if branch.get("type") == "string")
+    assert text["maxLength"] == limit
+
+
 @pytest.mark.parametrize(
     "path,method,operation_id,responses",
     [
