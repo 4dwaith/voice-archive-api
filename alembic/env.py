@@ -4,7 +4,7 @@ from sqlalchemy import engine_from_config, pool
 from sqlalchemy.engine import URL
 
 from alembic import context
-from voice_archive_api.core.config import get_settings
+from voice_archive_api.core.config import Settings
 from voice_archive_api.db import models  # noqa: F401 - register domain metadata
 from voice_archive_api.db.base import Base
 
@@ -18,7 +18,7 @@ target_metadata = Base.metadata
 
 def database_url() -> str | URL:
     configured_url = config.get_main_option("sqlalchemy.url")
-    return configured_url or get_settings().database_url
+    return configured_url or Settings().database_url
 
 
 def run_migrations_offline() -> None:

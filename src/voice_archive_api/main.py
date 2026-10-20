@@ -2,36 +2,43 @@ from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 import logging
 
-from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from sqlalchemy.engine import make_url
 
 from voice_archive_api import __version__
 from voice_archive_api.api.errors import install_error_handlers
 from voice_archive_api.api.v1.books import install_book_error_handlers
 from voice_archive_api.api.v1.router import router as v1_router
-from voice_archive_api.core.config import Settings, get_settings
+from voice_archive_api.core.application import Application
+from voice_archive_api.core.config import Settings
+from voice_archive_api.db.session import create_database_engine, create_session_factory
 
 # Uvicorn configures this logger in both CLI and PyCharm module runs.
 logger = logging.getLogger("uvicorn.error")
 
 
-def create_app(settings: Settings | None = None) -> FastAPI:
-    resolved_settings = settings or get_settings()
+def create_app(settings: Settings | None = None) -> Application:
+    resolved_settings = settings if settings is not None else Settings()
 
     @asynccontextmanager
-    async def lifespan(_: FastAPI) -> AsyncIterator[None]:
-        database_backend = make_url(resolved_settings.database_url).get_backend_name()
-        logger.info(
-            "Starting Voice Archive API version=%s environment=%s database_backend=%s",
-            __version__,
-            resolved_settings.environment,
-            database_backend,
-        )
-        yield
-        logger.info("Stopping Voice Archive API")
+    async def lifespan(application: Application) -> AsyncIterator[None]:
+        # Engine creation is lazy about connecting; liveness/docs need no database.
+        engine = create_database_engine(resolved_settings.database_url)
+        try:
+            application.state.engine = engine
+            application.state.session_factory = create_session_factory(engine)
+            logger.info(
+                "Starting Voice Archive API version=%s environment=%s database_backend=%s",
+                __version__,
+                resolved_settings.environment,
+                engine.url.get_backend_name(),
+            )
+            yield
+        finally:
+            engine.dispose()
+            logger.info("Stopping Voice Archive API")
 
-    application = FastAPI(
+    application = Application(
+        settings=resolved_settings,
         title="Voice Archive API",
         version=__version__,
         lifespan=lifespan,

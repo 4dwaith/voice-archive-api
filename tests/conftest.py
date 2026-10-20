@@ -4,14 +4,13 @@ from uuid import uuid4
 
 import pytest
 from alembic.config import Config
-from fastapi import FastAPI
 from fastapi.testclient import TestClient
 from psycopg import sql
 from sqlalchemy import create_engine
 from sqlalchemy.engine import Engine, make_url
-from sqlalchemy.orm import Session, sessionmaker
 
 from alembic import command
+from voice_archive_api.core.application import Application
 from voice_archive_api.core.config import Settings
 from voice_archive_api.db.session import create_database_engine, get_db
 from voice_archive_api.main import create_app
@@ -74,7 +73,7 @@ def test_engine(test_database_url: str, migration_config: Config) -> Generator[E
 
 
 @pytest.fixture
-def application(test_database_url: str, test_engine: Engine) -> FastAPI:
+def application(test_database_url: str, test_engine: Engine, tmp_path: Path) -> Application:
     url = make_url(test_database_url)
     settings = Settings(
         environment="test",
@@ -86,12 +85,7 @@ def application(test_database_url: str, test_engine: Engine) -> FastAPI:
         upload_root=Path("unused-in-metadata-tests"),
         _env_file=None,
     )
-    app = create_app(settings)
-    test_session_factory = sessionmaker(
-        bind=test_engine,
-        autoflush=False,
-        expire_on_commit=False,
-    )
+    return create_app(settings)
 
     def override_get_db() -> Generator[Session]:
         session = test_session_factory()
@@ -105,7 +99,7 @@ def application(test_database_url: str, test_engine: Engine) -> FastAPI:
 
 
 @pytest.fixture
-def client(application: FastAPI) -> Generator[TestClient]:
+def client(application: Application) -> Generator[TestClient]:
     with TestClient(application) as test_client:
         yield test_client
 

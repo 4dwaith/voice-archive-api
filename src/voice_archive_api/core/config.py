@@ -1,4 +1,3 @@
-from functools import lru_cache
 from pathlib import Path
 from typing import Literal, Self
 from urllib.parse import urlsplit
@@ -80,8 +79,3 @@ class Settings(BaseSettings):
         if not self.cors_origins:
             raise ValueError("cors_origins must contain at least one origin")
         return self
-
-
-@lru_cache
-def get_settings() -> Settings:
-    return Settings()
