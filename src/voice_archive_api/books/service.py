@@ -2,12 +2,19 @@ from collections.abc import Iterator
 from contextlib import contextmanager
 from datetime import UTC, datetime
 
-from psycopg.errors import UniqueViolation
+from psycopg.errors import ForeignKeyViolation, UniqueViolation
 from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
-from voice_archive_api.books.constants import UNIQUE_BOOK_IDENTITY
+from voice_archive_api.book_files import service as file_service
+from voice_archive_api.books.constants import (
+    FOREIGN_KEY_BOOK_COVER_FILE,
+    FOREIGN_KEY_BOOK_SOURCE_PDF_FILE,
+    UNIQUE_BOOK_COVER_FILE,
+    UNIQUE_BOOK_IDENTITY,
+    UNIQUE_BOOK_SOURCE_PDF_FILE,
+)
 from voice_archive_api.books.model import Book
 from voice_archive_api.books.schemas import BookCreate, BookPatch
 from voice_archive_api.books.validation import normalize_identity
@@ -18,6 +25,14 @@ class BookNotFound(Exception):
 
 
 class DuplicateBook(Exception):
+    pass
+
+
+class CoverFileAlreadyLinked(Exception):
+    pass
+
+
+class SourcePdfFileAlreadyLinked(Exception):
     pass
 
 
@@ -46,19 +61,37 @@ def check_duplicate(
 
 @contextmanager
 def book_write(db: Session) -> Iterator[None]:
-    """Roll back failed book writes and translate duplicate identity errors."""
+    """Roll back failed book writes and translate known constraint failures."""
     try:
         yield
     except Exception as exc:
         db.rollback()
-        # Translate only this unique constraint, never unrelated data failures.
-        if (
-                isinstance(exc, IntegrityError)
-                and isinstance(exc.orig, UniqueViolation)
-                and exc.orig.diag.constraint_name == UNIQUE_BOOK_IDENTITY
-        ):
-            raise DuplicateBook from exc
+        if isinstance(exc, IntegrityError):
+            constraint = exc.orig.diag.constraint_name if isinstance(
+                exc.orig, (UniqueViolation, ForeignKeyViolation)
+            ) else None
+            if isinstance(exc.orig, UniqueViolation):
+                if constraint == UNIQUE_BOOK_IDENTITY:
+                    raise DuplicateBook from exc
+                if constraint == UNIQUE_BOOK_COVER_FILE:
+                    raise CoverFileAlreadyLinked from exc
+                if constraint == UNIQUE_BOOK_SOURCE_PDF_FILE:
+                    raise SourcePdfFileAlreadyLinked from exc
+            if isinstance(exc.orig, ForeignKeyViolation):
+                # A file can disappear after lookup but before the book commits.
+                if constraint == FOREIGN_KEY_BOOK_COVER_FILE:
+                    raise file_service.CoverFileNotFound from exc
+                if constraint == FOREIGN_KEY_BOOK_SOURCE_PDF_FILE:
+                    raise file_service.SourcePdfFileNotFound from exc
         raise
+
+
+def check_file_links(db: Session, changes: dict) -> None:
+    """Only persisted, successfully prepared files can be linked to a book."""
+    if (cover_id := changes.get("cover_file_id")) is not None:
+        file_service.get_cover_file(db, cover_id)
+    if (pdf_id := changes.get("source_pdf_file_id")) is not None:
+        file_service.get_pdf_file(db, pdf_id)
 
 
 def list_books(
@@ -76,6 +109,7 @@ def create_book(db: Session, payload: BookCreate) -> Book:
         title = normalize_identity(payload.title)
         author = normalize_identity(payload.author)
         check_duplicate(db, title, author)
+        check_file_links(db, payload.model_dump())
         now = datetime.now(UTC)
         book = Book(
             **payload.model_dump(),
@@ -102,6 +136,7 @@ def patch_book(db: Session, book_id: int, payload: BookPatch) -> Book:
         title = normalize_identity(changes.get("title", book.title))
         author = normalize_identity(changes.get("author", book.author))
         check_duplicate(db, title, author, exclude_id=book.id)
+        check_file_links(db, changes)
 
         for field, value in changes.items():
             setattr(book, field, value)
