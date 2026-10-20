@@ -3,7 +3,7 @@ import json
 import pytest
 from pydantic import ValidationError
 
-from voice_archive_api.books.schemas import BookPatch
+from voice_archive_api.books.schemas import BookCreate, BookPatch
 
 from .helpers import assert_operation_contract, assert_request_body_contract
 
@@ -15,7 +15,11 @@ from .helpers import assert_operation_contract, assert_request_body_contract
             "/api/v1/books",
             "post",
             "create_api_v1_book",
-            {"201": "BookResponse", "409": "BookErrorResponse", "422": "ValidationErrorResponse"},
+            {
+                "201": "BookResponse", "404": ["CoverFileErrorResponse", "SourcePdfFileErrorResponse"],
+                "409": "BookErrorResponse",
+                "422": "ValidationErrorResponse",
+            },
         ),
         (
             "/api/v1/books",
@@ -35,7 +39,7 @@ from .helpers import assert_operation_contract, assert_request_body_contract
             "patch_api_v1_book",
             {
                 "200": "BookResponse",
-                "404": "BookErrorResponse",
+                "404": ["BookErrorResponse", "CoverFileErrorResponse", "SourcePdfFileErrorResponse"],
                 "409": "BookErrorResponse",
                 "422": "ValidationErrorResponse",
             },
@@ -76,6 +80,15 @@ def test_patch_schema_keeps_non_nullable_fields_omittable(field):
 def test_patch_rejects_uneditable_fields():
     with pytest.raises(ValidationError):
         BookPatch(id=1)
+
+
+@pytest.mark.parametrize("field", ["cover_file_id", "source_pdf_file_id"])
+@pytest.mark.parametrize("model", [BookCreate, BookPatch])
+@pytest.mark.parametrize("value", [0, -1, 9_223_372_036_854_775_808, True, 1.5, "1"])
+def test_file_link_ids_reject_invalid_values(model, field, value):
+    base = {"title": "Book", "language": "en"} if model is BookCreate else {}
+    with pytest.raises(ValidationError):
+        model(**base, **{field: value})
 
 
 @pytest.mark.parametrize(
