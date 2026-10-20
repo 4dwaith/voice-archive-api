@@ -8,7 +8,7 @@ import pytest
 from httpx import Response
 from pytest_bdd import given, parsers, scenarios, then, when
 
-from tests.storage.file_samples import cover_bytes, pdf_bytes
+from tests.file_processing.file_samples import cover_bytes, pdf_bytes
 
 scenarios("../features/books")
 

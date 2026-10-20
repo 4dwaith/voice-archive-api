@@ -47,3 +47,24 @@ def assert_request_body_contract(
     assert body["content"]["application/json"]["schema"] == {
         "$ref": f"#/components/schemas/{request_model}"
     }, context
+
+
+def assert_multipart_file_body_contract(
+    document: dict[str, Any],
+    path: str,
+    method: str,
+    file_field: str,
+    *,
+    required: bool = True,
+) -> None:
+    """Check a multipart request body containing one required binary file field."""
+    body = document["paths"][path][method]["requestBody"]
+    context = f"{method.upper()} {path}: multipart request body"
+    assert body.get("required", False) is required, context
+    assert set(body["content"]) == {"multipart/form-data"}, context
+    reference = body["content"]["multipart/form-data"]["schema"]["$ref"].split("/")[-1]
+    schema = document["components"]["schemas"][reference]
+    assert schema["required"] == [file_field], context
+    assert set(schema["properties"]) == {file_field}, context
+    assert schema["properties"][file_field]["type"] == "string", context
+    assert schema["properties"][file_field]["contentMediaType"] == "application/octet-stream", context

@@ -10,7 +10,7 @@ from pytest_bdd import given, parsers, scenarios, then, when
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
-from tests.storage.file_samples import cover_bytes, pdf_bytes
+from tests.file_processing.file_samples import cover_bytes, pdf_bytes
 from voice_archive_api.book_files.model import CoverFile, SourcePdfFile
 
 scenarios("../features/book_files")
