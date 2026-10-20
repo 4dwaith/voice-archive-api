@@ -5,7 +5,7 @@ from datetime import UTC, datetime
 from sqlalchemy.orm import Session
 
 from voice_archive_api.book_files.covers import prepare_cover
-from voice_archive_api.book_files.model import CoverFile, SourcePdfFile
+from voice_archive_api.book_files.model import CoverFile, PendingFileDeletion, SourcePdfFile
 from voice_archive_api.book_files.pdfs import prepare_pdf
 from voice_archive_api.file_handling import BinarySource, Storage
 
@@ -16,6 +16,12 @@ class CoverFileNotFound(Exception):
 
 class SourcePdfFileNotFound(Exception):
     pass
+
+
+def queue_file_deletion(db: Session, record: CoverFile | SourcePdfFile, *, now: datetime) -> None:
+    """Remove a file record and queue its storage key for deletion in the caller's transaction."""
+    db.add(PendingFileDeletion(storage_key=record.storage_key, queued_at=now))
+    db.delete(record)
 
 
 def get_cover_file(db: Session, file_id: int) -> CoverFile:

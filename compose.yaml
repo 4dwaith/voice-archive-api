@@ -21,7 +21,7 @@ services:
     build:
       context: .
       target: runtime
-    environment:
+    environment: &application-environment
       VOICE_ARCHIVE_POSTGRES_USER: ${VOICE_ARCHIVE_POSTGRES_USER:?Set VOICE_ARCHIVE_POSTGRES_USER in .env}
       VOICE_ARCHIVE_POSTGRES_PASSWORD: ${VOICE_ARCHIVE_POSTGRES_PASSWORD:?Set VOICE_ARCHIVE_POSTGRES_PASSWORD in .env}
       VOICE_ARCHIVE_POSTGRES_DB: ${VOICE_ARCHIVE_POSTGRES_DB:?Set VOICE_ARCHIVE_POSTGRES_DB in .env}
@@ -45,6 +45,21 @@ services:
       interval: 5s
       timeout: 5s
       retries: 20
+
+  maintenance:
+    build:
+      context: .
+      target: runtime
+    environment: *application-environment
+    volumes:
+      - uploads-data:/app/uploads
+    command: ["python", "-m", "voice_archive_api.maintenance"]
+    depends_on:
+      api:
+        condition: service_healthy
+    healthcheck:
+      test: ["NONE"]
+    restart: unless-stopped
 
   db-test:
     image: postgres:18-bookworm

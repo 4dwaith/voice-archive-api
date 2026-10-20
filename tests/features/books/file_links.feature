@@ -57,6 +57,7 @@ Feature: Link prepared covers and PDFs through an explicit book save
     And the book has no <kind> link
     And the book links to prepared <other_kind> "<other_file>"
     And creation time is preserved and update time advances
+    And the original <kind> can no longer be retrieved
 
     Examples:
       | kind       | other_kind | other_file |
@@ -81,6 +82,15 @@ Feature: Link prepared covers and PDFs through an explicit book save
     Then my changes are saved
     And the book links to prepared cover "Replacement"
     And the book links to prepared source PDF "PDF"
+    And the original cover can no longer be retrieved
+
+  Scenario: Deleting a book also removes access to its files
+    Given my library contains "Existing" linked to prepared cover "Cover" and source PDF "PDF"
+    And I am editing the book "Existing"
+    When I delete the book
+    Then the book is removed from my library
+    And the original cover can no longer be retrieved
+    And the original source PDF can no longer be retrieved
 
   Scenario Outline: Missing files reject creation
     Given I am adding a book with valid required details

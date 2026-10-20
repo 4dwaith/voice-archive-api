@@ -2,8 +2,8 @@
 
 FastAPI backend using Python 3.14, SQLAlchemy, and PostgreSQL 18. Supports book
 CRUD and pagination, optional cover/PDF links, file uploads, and range-enabled
-file delivery. The frontend is a separate project; authentication and automatic
-file cleanup are not implemented yet.
+file delivery. The frontend is a separate project; authentication is not
+implemented yet.
 
 ## Run
 
@@ -45,6 +45,17 @@ PostgreSQL uses the `postgres-data` volume; files use `uploads-data`, mounted at
 `/app/uploads`. `docker compose down` preserves both; `docker compose down -v`
 deletes both. Changing `.env` credentials does not update an existing database's
 users.
+
+The `maintenance` service runs two independent jobs at startup and daily at
+midnight UTC: one removes temporary files inactive for 24 hours; the other
+removes unlinked prepared files older than seven days and retries pending
+deletions. Replacing/clearing a book's file or deleting its book removes the file
+record and queues its bytes for maintenance. Failed file deletions are retried
+on later runs. For an immediate run:
+`docker compose run --rm --no-deps maintenance python -m voice_archive_api.maintenance --once`.
+Use `--once --job temporary` or `--once --job promoted` to run just one job.
+The default `--job all` runs both sequentially, attempting each even if the other
+fails. Without `--once`, the selected jobs run independently on their schedules.
 
 ## Tests
 

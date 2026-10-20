@@ -455,6 +455,16 @@ def file_link_absent(client, state, kind):
     assert fetch_saved_book(client, state)[file_id_field(kind)] is None
 
 
+@then(parsers.re(r'the original (?P<kind>cover|source PDF) can no longer be retrieved'))
+def original_file_removed(client, state, kind):
+    file_id = state.original[file_id_field(kind)]
+    path = "cover-files" if kind == "cover" else "source-pdf-files"
+    response = client.get(f"/api/v1/{path}/{file_id}")
+    assert response.status_code == 404, response.text
+    prefix = "cover" if kind == "cover" else "source_pdf"
+    assert response.json()["error"]["code"] == f"{prefix}_file_not_found"
+
+
 @then(parsers.re(r'I am told that the (?P<kind>cover|source PDF) file cannot be found'))
 def file_not_found(state, kind):
     response = result(state)
