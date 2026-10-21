@@ -1,10 +1,13 @@
-"""Shared request bounds and errors for the two file upload APIs."""
+"""Request bounds and errors for file uploads."""
 
 from typing import Literal
 
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 from fastapi.routing import APIRoute
+from fastapi.exceptions import RequestValidationError
+from voice_archive_api.book_files.model import FileKind
+from voice_archive_api.book_files.service import FILE_STRATEGIES
 from python_multipart.exceptions import MultipartParseError
 from starlette.exceptions import HTTPException
 from starlette.types import Message
@@ -53,8 +56,6 @@ def install_upload_error_handlers(app: FastAPI) -> None:
 class UploadRoute(APIRoute):
     """Bound multipart spooling before FastAPI validates the uploaded file field."""
 
-    limit_setting_key: str
-
     def get_route_handler(self):
         handler = super().get_route_handler()
         if "POST" not in self.methods:
@@ -62,7 +63,23 @@ class UploadRoute(APIRoute):
 
         async def bounded_upload(request: Request):
             settings = get_app_settings(request)
-            file_size_limit = getattr(settings, self.limit_setting_key) + MULTIPART_OVERHEAD_BYTES
+            raw_kind = request.path_params["kind"]
+            try:
+                kind = FileKind(raw_kind)
+            except ValueError as exc:
+                raise RequestValidationError(
+                    [
+                        {
+                            "type": "enum",
+                            "loc": ("path", "kind"),
+                            "input": raw_kind,
+                            "msg": "Unsupported file kind",
+                            "ctx": {"expected": ", ".join(FileKind)},
+                        }
+                    ]
+                ) from exc
+            strategy = FILE_STRATEGIES[kind]
+            file_size_limit = getattr(settings, strategy.limit_setting_key) + MULTIPART_OVERHEAD_BYTES
 
             if settings.upload_max_bytes is not None:
                 # There's an overall limit on max bytes for all file uploads.

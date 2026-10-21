@@ -12,8 +12,8 @@ from pytest_bdd import given, parsers, scenarios, then, when
 from sqlalchemy.orm import Session
 
 from tests.file_processing.file_samples import cover_bytes, pdf_bytes
+from voice_archive_api.book_files.model import FileKind, StoredFile, FileCleanupProgress, PendingFileDeletion
 from voice_archive_api.book_files import service as file_service
-from voice_archive_api.book_files.model import CoverFile, FileCleanupProgress, PendingFileDeletion, SourcePdfFile
 from voice_archive_api.books import service as book_service
 from voice_archive_api.books.schemas import BookCreate, BookPatch
 from voice_archive_api.file_handling import LocalStorage
@@ -23,7 +23,7 @@ scenarios("../features/maintenance")
 
 @dataclass
 class CleanupScenario:
-    file: CoverFile | SourcePdfFile | None = None
+    file: StoredFile | None = None
     book_id: int | None = None
     temporary_key: str | None = None
     orphan_key: str | None = None
@@ -72,18 +72,16 @@ def configure_database(test_engine, cli_environment):
 @given(parsers.parse("an unlinked {kind} uploaded {days:d} days ago"))
 def uploaded_file(test_engine, storage, state, kind, days):
     with Session(test_engine, expire_on_commit=False) as db:
-        if kind == "cover":
-            record = file_service.create_cover_file(db, BytesIO(cover_bytes()), storage, max_bytes=100_000)
-        else:
-            assert kind == "source PDF"
-            record = file_service.create_pdf_file(db, BytesIO(pdf_bytes()), storage, max_bytes=100_000)
+        file_kind = {"cover": FileKind.COVER, "source PDF": FileKind.SOURCE_PDF}[kind]
+        payload = {FileKind.COVER: cover_bytes, FileKind.SOURCE_PDF: pdf_bytes}[file_kind]()
+        record = file_service.create_file(db, file_kind, BytesIO(payload), storage, max_bytes=100_000)
         record.created_at = datetime.now(UTC) - timedelta(days=days)
         db.commit()
         state.file = record
 
 
 def file_link(state):
-    return "cover_file_id" if isinstance(state.file, CoverFile) else "source_pdf_file_id"
+    return file_service.BOOK_FILE_FIELDS[state.file.kind]
 
 
 @given("the uploaded file is linked to a book")
@@ -98,8 +96,7 @@ def linked_file(test_engine, state):
 def past_scan_boundary(test_engine):
     with Session(test_engine) as db:
         progress = db.get(FileCleanupProgress, 1)
-        progress.cover_cleanup_before = datetime.now(UTC) - timedelta(days=7)
-        progress.source_pdf_cleanup_before = progress.cover_cleanup_before
+        progress.cleanup_before = datetime.now(UTC) - timedelta(days=7)
         db.commit()
 
 
@@ -112,10 +109,8 @@ def remove_book_file(test_engine, storage, state, action):
             book_service.patch_book(db, state.book_id, BookPatch(**{file_link(state): None}))
         else:
             assert action == "replaced"
-            if isinstance(state.file, CoverFile):
-                replacement = file_service.create_cover_file(db, BytesIO(cover_bytes()), storage, max_bytes=100_000)
-            else:
-                replacement = file_service.create_pdf_file(db, BytesIO(pdf_bytes()), storage, max_bytes=100_000)
+            payload = {FileKind.COVER: cover_bytes, FileKind.SOURCE_PDF: pdf_bytes}[state.file.kind]()
+            replacement = file_service.create_file(db, state.file.kind, BytesIO(payload), storage, max_bytes=100_000)
             book_service.patch_book(db, state.book_id, BookPatch(**{file_link(state): replacement.id}))
 
 

@@ -31,8 +31,7 @@ def test_accepted_covers_become_detached_static_webp(storage, format):
     prepared = prepare_cover(source, storage, max_bytes=len(payload))
     assert not source.closed
     assert prepared.storage_key.startswith("promoted/")
-    assert prepared.media_type == "image/webp"
-    assert (prepared.width, prepared.height) == (32, 24)
+    assert (prepared.metadata["width"], prepared.metadata["height"]) == (32, 24)
     assert len(remaining_files(storage)) == 1
     with storage.open(prepared.storage_key) as output:
         assert len(output.read()) == prepared.byte_size
@@ -91,7 +90,7 @@ def test_exif_orientation_is_applied_then_metadata_is_removed(storage):
     exif[270] = "private description"
     payload = image_bytes("JPEG", exif=exif, icc_profile=b"private profile")
     prepared = prepare_cover(BytesIO(payload), storage, max_bytes=100_000)
-    assert (prepared.width, prepared.height) == (24, 32)
+    assert (prepared.metadata["width"], prepared.metadata["height"]) == (24, 32)
     with storage.open(prepared.storage_key) as output, Image.open(output) as image:
         assert image.size == (24, 32)
         assert not image.getexif()

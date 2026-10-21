@@ -24,9 +24,9 @@ def test_openapi_preserves_unicode_length_constraints(openapi_document, model, f
             "post",
             "create_api_v1_book",
             {
-                "201": "BookResponse", "404": ["CoverFileErrorResponse", "SourcePdfFileErrorResponse"],
+                "201": "BookResponse", "404": "FileErrorResponse",
                 "409": "BookErrorResponse",
-                "422": "ValidationErrorResponse",
+                "422": ["ValidationErrorResponse", "FileErrorResponse"],
             },
         ),
         (
@@ -47,9 +47,9 @@ def test_openapi_preserves_unicode_length_constraints(openapi_document, model, f
             "patch_api_v1_book",
             {
                 "200": "BookResponse",
-                "404": ["BookErrorResponse", "CoverFileErrorResponse", "SourcePdfFileErrorResponse"],
+                "404": ["BookErrorResponse", "FileErrorResponse"],
                 "409": "BookErrorResponse",
-                "422": "ValidationErrorResponse",
+                "422": ["ValidationErrorResponse", "FileErrorResponse"],
             },
         ),
         (

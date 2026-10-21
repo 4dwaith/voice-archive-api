@@ -1,9 +1,9 @@
-from dataclasses import dataclass
-from typing import BinaryIO, Literal
+from typing import BinaryIO
 
 from pypdf import PdfReader
 from pypdf.errors import DependencyError, PyPdfError
 
+from voice_archive_api.book_files.model import PreparedFile
 from voice_archive_api.file_handling import BinarySource, Storage
 
 
@@ -13,14 +13,6 @@ class InvalidPdf(Exception):
 
 class EncryptedPdfNotSupported(Exception):
     """Encrypted PDFs require a password workflow that is not supported yet."""
-
-
-@dataclass(frozen=True)
-class PreparedPdf:
-    storage_key: str
-    byte_size: int
-    page_count: int
-    media_type: Literal["application/pdf"] = "application/pdf"
 
 
 def _inspect_pdf(source: BinaryIO) -> tuple[int, int]:
@@ -50,7 +42,7 @@ def _inspect_pdf(source: BinaryIO) -> tuple[int, int]:
     return byte_size, page_count
 
 
-def prepare_pdf(source: BinarySource, storage: Storage, *, max_bytes: int) -> PreparedPdf:
+def prepare_pdf(source: BinarySource, storage: Storage, *, max_bytes: int) -> PreparedFile:
     """Stage, inspect, then promote a detached source PDF without rewriting it.
 
     Incoming bytes use bounded storage reads. Parsing seeks through the staged
@@ -67,7 +59,7 @@ def prepare_pdf(source: BinarySource, storage: Storage, *, max_bytes: int) -> Pr
         # Close the validation reader before unlinking the temporary name.
         # Unlinking may not work with file handles open
         promoted_key = storage.promote(temporary_key)
-        return PreparedPdf(promoted_key, byte_size, page_count)
+        return PreparedFile(promoted_key, byte_size, {"page_count": page_count})
     except BaseException:
         if promoted_key is not None:
             storage.delete(promoted_key)

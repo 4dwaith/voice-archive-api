@@ -11,7 +11,7 @@ from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from tests.file_processing.file_samples import cover_bytes, pdf_bytes, pdf_bytes_of_size
-from voice_archive_api.book_files.model import CoverFile, PendingFileDeletion, SourcePdfFile
+from voice_archive_api.book_files.model import StoredFile, PendingFileDeletion
 
 scenarios("../features/book_files")
 
@@ -32,6 +32,7 @@ def upload():
 
 @dataclass
 class DeliveryScenario:
+    kind: str = "cover"
     url: str = ""
     content: bytes = b""
     response: Response | None = None
@@ -43,11 +44,10 @@ def delivery():
 
 
 def file_api_path(kind):
-    return {"cover": "/api/v1/cover-files", "source PDF": "/api/v1/source-pdf-files"}[kind]
+    return {"cover": "/api/v1/files/cover", "source PDF": "/api/v1/files/source_pdf"}[kind]
 
 
-COVER_RESPONSE_FIELDS = {"id", "byte_size", "width", "height", "created_at"}
-PDF_RESPONSE_FIELDS = {"id", "byte_size", "page_count", "created_at"}
+FILE_RESPONSE_FIELDS = {"id", "kind", "byte_size", "metadata", "created_at"}
 
 
 @given("I am uploading a cover")
@@ -93,10 +93,8 @@ def misleading_name_and_type(upload, filename, media_type):
 
 def set_file_limit(application, upload, limit):
     settings = application.state.settings
-    if upload.path == "/api/v1/cover-files":
-        settings.cover_max_bytes = limit
-    else:
-        settings.pdf_max_bytes = limit
+    key = {file_api_path("cover"): "cover_max_bytes", file_api_path("source PDF"): "pdf_max_bytes"}[upload.path]
+    setattr(settings, key, limit)
 
 
 @given("the file size equals the configured limit")
@@ -137,24 +135,24 @@ def assert_ready_response(upload, expected_fields):
 
 @then("the cover is ready to link to a book")
 def ready_cover(test_engine, file_storage, upload):
-    body = assert_ready_response(upload, COVER_RESPONSE_FIELDS)
+    body = assert_ready_response(upload, FILE_RESPONSE_FIELDS)
     with Session(test_engine) as db:
-        record = db.get(CoverFile, body["id"])
+        record = db.get(StoredFile, body["id"])
         assert record is not None
         key = record.storage_key
         assert isinstance(key, str)
         with file_storage.open(key) as stream, Image.open(stream) as image:
             assert image.format == "WEBP"
-            assert image.size == (body["width"], body["height"]) == (16, 24)
+            assert image.size == (body["metadata"]["width"], body["metadata"]["height"]) == (16, 24)
         assert (file_storage.root / key).stat().st_size == body["byte_size"]
         assert list(stored_files(file_storage)) == [file_storage.root / key]
 
 
 @then("the PDF is ready to link to a book")
 def ready_pdf(test_engine, file_storage, upload):
-    body = assert_ready_response(upload, PDF_RESPONSE_FIELDS)
+    body = assert_ready_response(upload, FILE_RESPONSE_FIELDS)
     with Session(test_engine) as db:
-        record = db.get(SourcePdfFile, body["id"])
+        record = db.get(StoredFile, body["id"])
         assert record is not None
         key = record.storage_key
         assert isinstance(key, str)
@@ -166,7 +164,7 @@ def ready_pdf(test_engine, file_storage, upload):
 
 @then(parsers.parse("the PDF has {page_count:d} pages"))
 def pdf_page_count(upload, page_count):
-    assert result(upload).json()["page_count"] == page_count
+    assert result(upload).json()["metadata"]["page_count"] == page_count
 
 
 @then("no book has been created")
@@ -184,15 +182,14 @@ def failed_upload(upload, status, code):
 @then("no file has been prepared")
 def no_file(test_engine, file_storage):
     with Session(test_engine) as db:
-        assert db.scalar(select(func.count()).select_from(CoverFile)) == 0
-        assert db.scalar(select(func.count()).select_from(SourcePdfFile)) == 0
+        assert db.scalar(select(func.count()).select_from(StoredFile)) == 0
     assert stored_files(file_storage) == {}
 
 
 @given(parsers.re(r"I have uploaded a prepared (?P<kind>cover|source PDF)"))
 def prepare_file(client, file_storage, upload, delivery, kind):
     upload.path = file_api_path(kind)
-    upload.content = cover_bytes() if kind == "cover" else pdf_bytes()
+    upload.content = {"cover": cover_bytes, "source PDF": pdf_bytes}[kind]()
     prepare_delivery(client, file_storage, upload, delivery)
 
 
@@ -206,9 +203,9 @@ def prepare_sized_pdf(client, file_storage, upload, delivery, byte_size):
 
 def prepare_delivery(client, file_storage, upload, delivery):
     upload_file(client, upload)
-    expected_fields = COVER_RESPONSE_FIELDS if upload.path == file_api_path("cover") else PDF_RESPONSE_FIELDS
-    body = assert_ready_response(upload, expected_fields)
-    delivery.url = f"{upload.path}/{body['id']}"
+    body = assert_ready_response(upload, FILE_RESPONSE_FIELDS)
+    delivery.kind = body["kind"]
+    delivery.url = f"/api/v1/files/{body['id']}"
 
     # Keep actual stored bytes separate from upload input: normalization can
     # change a cover, and delivery must match the stored representation.
@@ -220,8 +217,7 @@ def prepare_delivery(client, file_storage, upload, delivery):
 
 @given(parsers.parse("the prepared {kind} is missing"))
 def point_to_missing_file(delivery, kind):
-    path = file_api_path(kind)
-    delivery.url = f"{path}/999999"
+    delivery.url = "/api/v1/files/999999"
 
 
 @given("the stored file has been removed")
@@ -278,9 +274,9 @@ def complete_file(delivery):
 @then(parsers.parse("delivery headers identify the {kind}"))
 def representation_headers(delivery, kind):
     headers = result(delivery).headers
-    cover = kind == "cover"
-    assert headers["content-type"] == ("image/webp" if cover else "application/pdf")
-    assert headers["content-disposition"] == f'inline; filename="{"cover.webp" if cover else "source.pdf"}"'
+    media_type, filename = {"cover": ("image/webp", "cover.webp"), "source PDF": ("application/pdf", "source.pdf")}[kind]
+    assert headers["content-type"] == media_type
+    assert headers["content-disposition"] == f'inline; filename="{filename}"'
     assert headers["accept-ranges"] == "bytes"
     assert headers["etag"]
     assert headers["last-modified"]
@@ -327,8 +323,7 @@ def invalid_range(delivery):
 def file_not_found(delivery, kind):
     response = result(delivery)
     assert response.status_code == 404, response.text
-    expected_code = {"cover": "cover_file_not_found", "source PDF": "source_pdf_file_not_found"}[kind]
-    assert response.json()["error"]["code"] == expected_code
+    assert response.json()["error"]["code"] == "file_not_found"
 
 
 @then("the range error identifies the complete file size")
@@ -337,17 +332,16 @@ def unsatisfiable_size(delivery):
 
 
 def prepared_file_identity(delivery):
-    path, file_id = delivery.url.rsplit("/", 1)
-    is_cover = path == file_api_path("cover")
-    return (CoverFile if is_cover else SourcePdfFile), int(file_id), is_cover
+    file_id = int(delivery.url.rsplit("/", 1)[1])
+    return StoredFile, file_id, {"cover": "cover_file_id", "source_pdf": "source_pdf_file_id"}[delivery.kind]
 
 
 @given("the prepared file is linked to a book")
 def link_prepared_file(client, delivery):
-    _, file_id, is_cover = prepared_file_identity(delivery)
+    _, file_id, field = prepared_file_identity(delivery)
     response = client.post("/api/v1/books", json={
         "title": "File owner", "language": "en",
-        "cover_file_id" if is_cover else "source_pdf_file_id": file_id,
+        field: file_id,
     })
     assert response.status_code == 201, response.text
 
@@ -387,17 +381,14 @@ def deletion_bytes_preserved(test_engine, file_storage, delivery):
 def prepared_file_in_use(delivery):
     response = result(delivery)
     assert response.status_code == 409, response.text
-    _, _, is_cover = prepared_file_identity(delivery)
-    assert response.json()["error"]["code"] == (
-        "cover_file_already_linked" if is_cover else "source_pdf_file_already_linked"
-    )
+    assert response.json()["error"]["code"] == "file_already_linked"
 
 
 @then("the prepared file and its book link remain available")
 def linked_file_preserved(client, test_engine, delivery):
-    model, file_id, is_cover = prepared_file_identity(delivery)
+    model, file_id, field = prepared_file_identity(delivery)
     book = client.get("/api/v1/books").json()["items"][0]
-    assert book["cover_file_id" if is_cover else "source_pdf_file_id"] == file_id
+    assert book[field] == file_id
     response = client.get(delivery.url)
     assert response.status_code == 200, response.text
     assert response.content == delivery.content

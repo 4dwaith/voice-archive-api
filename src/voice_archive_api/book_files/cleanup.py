@@ -5,12 +5,11 @@ from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from itertools import islice
 
-from sqlalchemy import exists, select, tuple_, union_all
-from sqlalchemy.orm import InstrumentedAttribute, Session, sessionmaker
+from sqlalchemy import exists, select, tuple_
+from sqlalchemy.orm import Session, sessionmaker
 
-from voice_archive_api.book_files.model import CoverFile, FileCleanupProgress, PendingFileDeletion, SourcePdfFile
-from voice_archive_api.book_files.service import queue_file_deletion
-from voice_archive_api.books.model import Book
+from voice_archive_api.book_files.model import StoredFile, FileCleanupProgress, PendingFileDeletion
+from voice_archive_api.book_files.service import file_is_unlinked, queue_file_deletion
 from voice_archive_api.file_handling import Storage
 
 logger = logging.getLogger(__name__)
@@ -30,73 +29,77 @@ def queue_expired_files(factory: sessionmaker[Session], now: datetime) -> int:
     """Scan indexed age windows, retaining one day of overlap for late commits."""
     total = 0
     cutoff = now - UNLINKED_RETENTION
-    scans: tuple[tuple[type[CoverFile] | type[SourcePdfFile], InstrumentedAttribute[int | None], str], ...] = (
-        (CoverFile, Book.cover_file_id, "cover_cleanup_before"),
-        (SourcePdfFile, Book.source_pdf_file_id, "source_pdf_cleanup_before"),
-    )
-    for model, link, boundary_field in scans:
-        linked_to_book = exists(select(Book.id).where(link == model.id))
-        conditions = [model.created_at < cutoff, ~linked_to_book]  # Older than the cut-off, and not linked to any books
-        with factory() as db:
-            progress = db.get(FileCleanupProgress, 1)
-            boundary: datetime = getattr(progress, boundary_field)
-        if boundary is not None:
-            # Search for files a little bit before the boundary to allow for time drift.
-            conditions.append(model.created_at >= boundary - SCAN_OVERLAP)  # Newer than the cleanup boundary
+    conditions = [StoredFile.created_at < cutoff, file_is_unlinked()]
+    with factory() as db:
+        progress = db.get(FileCleanupProgress, 1)
+        assert progress is not None
+        boundary = progress.cleanup_before
+    if boundary is not None:
+        conditions.append(StoredFile.created_at >= boundary - SCAN_OVERLAP)
 
-        # Stores the (created_at, id) of the last record processed
-        cursor = None
+    # Stores the (created_at, id) of the last record processed
+    cursor = None
 
-        # Paginate with cursor. It breaks out of the loop when there are no more records to process.
-        while True:
-            with factory.begin() as db:
-                # Lock the progress record to prevent concurrent cleanup runs from interfering with
-                # and overwriting each other's progress.
-                progress = db.get(FileCleanupProgress, 1, with_for_update=True)
-                query = select(model).where(*conditions)
+    # Paginate with cursor. It breaks out of the loop when there are no more records to process.
+    while True:
+        with factory.begin() as db:
+            # Lock the progress record to prevent concurrent cleanup runs from interfering with
+            # and overwriting each other's progress.
+            progress = db.get(FileCleanupProgress, 1, with_for_update=True)
+            assert progress is not None
+            query = select(StoredFile).where(*conditions)
 
-                if cursor is not None:
-                    query = query.where(tuple_(model.created_at, model.id) > cursor)
+            if cursor is not None:
+                query = query.where(tuple_(StoredFile.created_at, StoredFile.id) > cursor)
 
-                # Select one batch of records - limited by batch size, offset by the cursor,
-                # skipping anything that's currently being modified by the application
-                records = list(
-                    db.scalars(
-                        query.order_by(model.created_at, model.id).limit(BATCH_SIZE).with_for_update(skip_locked=True)
+            # Select one batch of records - limited by batch size, offset by the cursor,
+            # skipping anything that's currently being modified by the application
+            records = list(
+                db.scalars(
+                    query.order_by(StoredFile.created_at, StoredFile.id)
+                    .limit(BATCH_SIZE)
+                    .with_for_update(skip_locked=True)
+                )
+            )
+
+            if not records:
+                # All records in the database which were eligible for delete have been deleted
+                #
+                # A skipped row must not disappear behind the saved boundary.
+                # Only update the progress record's boundary if no unlinked candidate remains.
+                if not db.scalar(select(exists().where(*conditions))):
+                    previous = progress.cleanup_before
+
+                    if previous is None or cutoff > previous:
+                        # The cutoff is updated as the latest boundary. This gets committed
+                        # to the DB after we exit the DB's with block
+                        progress.cleanup_before = cutoff
+                break
+
+            # There are records to process. Update the last record's values as the cursor
+            cursor = (records[-1].created_at, records[-1].id)
+
+            # Recheck the whole locked batch in one fresh READ COMMITTED query.
+            # The row is locked with FOR UPDATE which prevents any foreign key references,
+            # but it's possible that the row was linked to after the condition was met, but before we acquired the lock.
+            unlinked_ids = set(
+                db.scalars(
+                    select(StoredFile.id).where(
+                        StoredFile.id.in_([record.id for record in records]),
+                        file_is_unlinked(),
                     )
                 )
+            )
 
-                if not records:
-                    # All records in the database which were eligible for delete have been deleted
-                    #
-                    # A skipped row must not disappear behind the saved boundary.
-                    # Only update the progress record's boundary if no unlinked candidate remains.
-                    if not db.scalar(select(exists().where(*conditions))):
-                        previous = getattr(progress, boundary_field)
+            for record in records:
+                if record.id not in unlinked_ids:
+                    continue
 
-                        if previous is None or cutoff > previous:
-                            # The cutoff is updated as the latest boundary. This gets committed
-                            # to the DB after we exit the DB's with block
-                            setattr(progress, boundary_field, cutoff)
-                    break
-
-                # There are records to process. Update the last record's values as the cursor
-                cursor = (records[-1].created_at, records[-1].id)
-
-                # Recheck the whole locked batch in one fresh READ COMMITTED query.
-                # The row is locked with FOR UPDATE which prevents any foreign key references,
-                # but it's possible that the row was linked to after the condition was met, but before we acquired the lock.
-                linked_ids = set(db.scalars(select(link).where(link.in_([record.id for record in records]))))
-
-                for record in records:
-                    if record.id in linked_ids:
-                        continue
-
-                    # Won't cause an N + 1 query, since we're not reading from the database.
-                    # These writes will be accumulated in memory, and sent forward in one flush
-                    queue_file_deletion(db, record, now=now)
-                    total += 1
-            # The database transaction is committed here
+                # Won't cause an N + 1 query, since we're not reading from the database.
+                # These writes will be accumulated in memory, and sent forward in one flush
+                queue_file_deletion(db, record, now=now)
+                total += 1
+        # The database transaction is committed here
     return total
 
 
@@ -153,7 +156,7 @@ def run_promoted_cleanup(
 
 
 def delete_orphan_files(factory: sessionmaker[Session], storage: Storage, now: datetime) -> tuple[int, int]:
-    """Delete aged promoted bytes absent from both file tables, in bounded batches.
+    """Delete aged promoted bytes absent from the file table, in bounded batches.
 
     Promoted keys are immutable and never reused. The seven-day grace period
     protects the short promotion-to-database-commit window of an active upload.
@@ -167,17 +170,10 @@ def delete_orphan_files(factory: sessionmaker[Session], storage: Storage, now: d
             batch = list(islice(candidates, BATCH_SIZE))
             if not batch:
                 break
-            # Check BOTH file tables immediately before deleting this batch.
+            # Check the file table immediately before deleting this batch.
             # No full-table key set or per-file database query is needed.
             with factory() as db:
-                referenced = set(
-                    db.scalars(
-                        union_all(
-                            select(CoverFile.storage_key).where(CoverFile.storage_key.in_(batch)),
-                            select(SourcePdfFile.storage_key).where(SourcePdfFile.storage_key.in_(batch)),
-                        )
-                    )
-                )
+                referenced = set(db.scalars(select(StoredFile.storage_key).where(StoredFile.storage_key.in_(batch))))
             for key in batch:
                 if key in referenced:
                     continue

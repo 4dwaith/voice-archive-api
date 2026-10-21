@@ -5,8 +5,7 @@ from fastapi.responses import JSONResponse
 from sqlalchemy.orm import Session
 
 from voice_archive_api.api.errors import ErrorResponse, ValidationErrorResponse
-from voice_archive_api.api.v1.cover_files import CoverFileErrorResponse
-from voice_archive_api.api.v1.source_pdf_files import SourcePdfFileErrorResponse
+from voice_archive_api.api.v1.files import FileErrorResponse
 from voice_archive_api.books import service
 from voice_archive_api.books.schemas import (
     BookCreate,
@@ -19,8 +18,7 @@ from voice_archive_api.db.session import get_db
 type BookErrorCode = Literal[
     "book_not_found",
     "duplicate_book",
-    "cover_file_already_linked",
-    "source_pdf_file_already_linked",
+    "file_already_linked",
 ]
 
 
@@ -63,15 +61,18 @@ BookId = Annotated[int, Path(gt=0, le=9_223_372_036_854_775_807)]
 missing_book: dict[int | str, dict[str, Any]] = {404: {"model": BookErrorResponse, "description": "Book not found"}}
 missing_file: dict[int | str, dict[str, Any]] = {
     404: {
-        "model": CoverFileErrorResponse | SourcePdfFileErrorResponse,
+        "model": FileErrorResponse,
         "description": "Referenced prepared file not found",
     }
 }
 missing_book_or_file: dict[int | str, dict[str, Any]] = {
     404: {
-        "model": BookErrorResponse | CoverFileErrorResponse | SourcePdfFileErrorResponse,
+        "model": BookErrorResponse | FileErrorResponse,
         "description": "Book or referenced prepared file not found",
     }
+}
+invalid_file_link: dict[int | str, dict[str, Any]] = {
+    422: {"model": ValidationErrorResponse | FileErrorResponse, "description": "Invalid request or file kind"}
 }
 conflict: dict[int | str, dict[str, Any]] = {
     409: {
@@ -86,7 +87,7 @@ conflict: dict[int | str, dict[str, Any]] = {
     status_code=201,
     response_model=BookResponse,
     operation_id="create_api_v1_book",
-    responses=missing_file | conflict,
+    responses=missing_file | conflict | invalid_file_link,
 )
 def create_book(payload: BookCreate, db: Database):
     """Create a book. Title and language are required; prepared cover/PDF IDs are optional."""
@@ -118,7 +119,7 @@ def get_book(book_id: BookId, db: Database):
     "/{book_id}",
     response_model=BookResponse,
     operation_id="patch_api_v1_book",
-    responses=missing_book_or_file | conflict,
+    responses=missing_book_or_file | conflict | invalid_file_link,
 )
 def patch_book(book_id: BookId, payload: BookPatch, db: Database):
     """Update supplied fields. Omission preserves values; only nullable fields accept null.

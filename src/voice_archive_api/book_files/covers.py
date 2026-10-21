@@ -1,10 +1,10 @@
 import warnings
-from dataclasses import dataclass
 from tempfile import TemporaryFile
-from typing import BinaryIO, Literal
+from typing import BinaryIO
 
 from PIL import Image, ImageOps, UnidentifiedImageError
 
+from voice_archive_api.book_files.model import PreparedFile
 from voice_archive_api.file_handling import BinarySource, Storage
 
 ACCEPTED_FORMATS = {"JPEG", "PNG", "WEBP"}
@@ -16,15 +16,6 @@ class InvalidImage(Exception):
 
 class UnsupportedMediaType(Exception):
     """The decoded image format is not an accepted cover format."""
-
-
-@dataclass(frozen=True)
-class PreparedCover:
-    storage_key: str
-    byte_size: int
-    width: int
-    height: int
-    media_type: Literal["image/webp"] = "image/webp"
 
 
 def _decode_cover(source: BinaryIO) -> Image.Image:
@@ -70,7 +61,7 @@ def _decode_cover(source: BinaryIO) -> Image.Image:
         raise InvalidImage from exc
 
 
-def prepare_cover(source: BinarySource, storage: Storage, *, max_bytes: int) -> PreparedCover:
+def prepare_cover(source: BinarySource, storage: Storage, *, max_bytes: int) -> PreparedFile:
     """Stage, validate, normalize, then promote a detached static WebP cover.
 
     max_bytes limits the incoming file, not the re-encoded result. The caller
@@ -109,7 +100,7 @@ def prepare_cover(source: BinarySource, storage: Storage, *, max_bytes: int) -> 
             storage.delete(original_key)
 
         promoted_key = storage.promote(normalized_key)
-        return PreparedCover(promoted_key, byte_size, width, height)
+        return PreparedFile(promoted_key, byte_size, {"width": width, "height": height})
     except BaseException:
         if promoted_key is not None:
             storage.delete(promoted_key)

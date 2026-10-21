@@ -37,9 +37,8 @@ def test_preparation_counts_pages_and_preserves_original_bytes(storage, page_cou
     prepared = prepare_pdf(source, storage, max_bytes=len(payload))
     assert not source.closed
     assert prepared.storage_key.startswith("promoted/")
-    assert prepared.media_type == "application/pdf"
     assert prepared.byte_size == len(payload)
-    assert prepared.page_count == page_count
+    assert prepared.metadata["page_count"] == page_count
     assert remaining_files(storage) == [storage.root / prepared.storage_key]
     with storage.open(prepared.storage_key) as output:
         assert output.read() == payload
@@ -51,7 +50,7 @@ def test_image_based_pdf_is_accepted(storage):
         image.save(buffer, "PDF")
         payload = buffer.getvalue()
     prepared = prepare_pdf(BytesIO(payload), storage, max_bytes=len(payload))
-    assert prepared.page_count == 1
+    assert prepared.metadata["page_count"] == 1
     with storage.open(prepared.storage_key) as output:
         assert output.read() == payload
 
@@ -130,7 +129,7 @@ def test_streaming_input(storage):
             return chunk
 
     prepared = prepare_pdf(Source(), storage, max_bytes=len(payload))
-    assert prepared.page_count == 3
+    assert prepared.metadata["page_count"] == 3
 
 
 def test_parser_uses_bounded_reads(storage):
@@ -155,7 +154,7 @@ def test_parser_uses_bounded_reads(storage):
 
     with patch.object(storage, "open", side_effect=lambda key: GuardedReader(original_open(key))):
         prepared = prepare_pdf(BytesIO(pdf_bytes(3)), storage, max_bytes=100_000)
-    assert prepared.page_count == 3
+    assert prepared.metadata["page_count"] == 3
 
 
 def test_storage_read_error_is_not_intercepted(storage):

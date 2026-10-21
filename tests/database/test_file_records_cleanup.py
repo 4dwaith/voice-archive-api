@@ -9,8 +9,8 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import sessionmaker
 
 from tests.file_processing.file_samples import cover_bytes, pdf_bytes
+from voice_archive_api.book_files.model import FileKind, StoredFile, FileCleanupProgress, PendingFileDeletion
 from voice_archive_api.book_files import cleanup, service
-from voice_archive_api.book_files.model import CoverFile, FileCleanupProgress, PendingFileDeletion, SourcePdfFile
 from voice_archive_api.books import service as book_service
 from voice_archive_api.books.model import Book
 from voice_archive_api.books.schemas import BookCreate, BookPatch
@@ -33,10 +33,8 @@ def storage(tmp_path):
 
 def prepared_file(factory, storage, kind, age=timedelta(days=8)):
     with factory() as db:
-        if kind == "cover":
-            record = service.create_cover_file(db, BytesIO(cover_bytes()), storage, max_bytes=100_000)
-        else:
-            record = service.create_pdf_file(db, BytesIO(pdf_bytes()), storage, max_bytes=100_000)
+        payload = {"cover": cover_bytes, "source_pdf": pdf_bytes}[kind]()
+        record = service.create_file(db, FileKind(kind), BytesIO(payload), storage, max_bytes=100_000)
         record.created_at = NOW - age
         db.commit()
         return record
@@ -146,11 +144,9 @@ def test_link_recheck_uses_one_query_for_the_whole_batch(factory, storage, test_
     reference_queries = []
 
     def capture_reference_query(connection, cursor, statement, parameters, context, executemany):
-        # Count standalone book-reference reads, excluding the candidate scans
-        # whose NOT EXISTS subqueries also mention books.
-        if statement.startswith("SELECT") and "FROM books" in statement:
-            if "FROM cover_files" not in statement and "FROM source_pdf_files" not in statement:
-                reference_queries.append(statement)
+        # The batch recheck returns IDs only; candidate scans return full rows.
+        if statement.startswith("SELECT files.id ") and "FROM books" in statement:
+            reference_queries.append(statement)
 
     event.listen(test_engine, "before_cursor_execute", capture_reference_query)
     try:
@@ -182,16 +178,14 @@ def test_pending_deletions_survive_upgrade_from_their_first_revision(factory, mi
         assert record.queued_at == NOW
 
 
-@pytest.mark.parametrize("kind,boundary_field", [
-    ("cover", "cover_cleanup_before"), ("source_pdf", "source_pdf_cleanup_before"),
-])
+@pytest.mark.parametrize("kind", ["cover", "source_pdf"])
 def test_scan_revisits_one_day_of_history_and_leaves_recent_files_for_later(
-    factory, storage, kind, boundary_field,
+    factory, storage, kind,
 ):
     boundary = prepared_file(factory, storage, kind, timedelta(days=7))
     cleanup.queue_expired_files(factory, NOW)
     with factory() as db:
-        assert getattr(db.get(FileCleanupProgress, 1), boundary_field) == NOW - timedelta(days=7)
+        assert db.get(FileCleanupProgress, 1).cleanup_before == NOW - timedelta(days=7)
         assert db.get(type(boundary), boundary.id) is not None
 
     # Simulate uploads becoming visible after the completed scan. Include the
@@ -203,19 +197,17 @@ def test_scan_revisits_one_day_of_history_and_leaves_recent_files_for_later(
         assert db.get(type(boundary), boundary.id) is None
         assert db.get(type(overlap), overlap.id) is None
         assert db.get(type(outside_overlap), outside_overlap.id) is not None
-        assert getattr(db.get(FileCleanupProgress, 1), boundary_field) == NOW - timedelta(days=6)
+        assert db.get(FileCleanupProgress, 1).cleanup_before == NOW - timedelta(days=6)
 
 
-@pytest.mark.parametrize("kind,boundary_field", [
-    ("cover", "cover_cleanup_before"), ("source_pdf", "source_pdf_cleanup_before"),
-])
-def test_locked_candidate_does_not_advance_boundary(factory, storage, kind, boundary_field):
+@pytest.mark.parametrize("kind", ["cover", "source_pdf"])
+def test_locked_candidate_does_not_advance_boundary(factory, storage, kind):
     record = prepared_file(factory, storage, kind)
     with factory.begin() as other:
         other.get(type(record), record.id, with_for_update=True)
         assert cleanup.queue_expired_files(factory, NOW) == 0
         with factory() as db:
-            assert getattr(db.get(FileCleanupProgress, 1), boundary_field) is None
+            assert db.get(FileCleanupProgress, 1).cleanup_before is None
     assert cleanup.queue_expired_files(factory, NOW) == 1
 
 
@@ -236,27 +228,26 @@ def test_interrupted_scan_retries_committed_batches_before_advancing(factory, st
         cleanup.queue_expired_files(factory, NOW)
     event.remove(factory, "before_commit", interrupt_second_batch)
     with factory() as db:
-        assert db.get(CoverFile, first.id) is None
+        assert db.get(StoredFile, first.id) is None
         assert db.get(PendingFileDeletion, first.storage_key) is not None
-        assert db.get(CoverFile, second.id) is not None
+        assert db.get(StoredFile, second.id) is not None
         cleanup_progress = db.get(FileCleanupProgress, 1)
         assert cleanup_progress is not None
         # The boundary was not updated because the deletion was interrupted
-        assert cleanup_progress.cover_cleanup_before is None
+        assert cleanup_progress.cleanup_before is None
 
     # A second attempt at cleanup was able to queue the second file
     assert cleanup.queue_expired_files(factory, NOW) == 1
 
 
-def test_each_table_saves_progress_independently(factory, storage):
+def test_locked_file_blocks_the_shared_scan_boundary(factory, storage):
     record = prepared_file(factory, storage, "source_pdf")
     with factory.begin() as other:
-        other.get(SourcePdfFile, record.id, with_for_update=True)
+        other.get(StoredFile, record.id, with_for_update=True)
         cleanup.queue_expired_files(factory, NOW)
         with factory() as db:
             progress = db.get(FileCleanupProgress, 1)
-            assert progress.cover_cleanup_before == NOW - timedelta(days=7)
-            assert progress.source_pdf_cleanup_before is None
+            assert progress.cleanup_before is None
 
 
 @pytest.mark.parametrize("action", ["replace", "clear", "delete"])
@@ -282,8 +273,8 @@ def test_failed_book_commit_preserves_links_file_records_and_bytes(factory, stor
             ))
     with factory() as db:
         assert db.get(Book, book_id).cover_file_id == old.id
-        assert db.get(CoverFile, old.id) is not None
-        assert db.get(CoverFile, replacement.id) is not None
+        assert db.get(StoredFile, old.id) is not None
+        assert db.get(StoredFile, replacement.id) is not None
         assert db.get(PendingFileDeletion, old.storage_key) is None
     assert storage.exists(old.storage_key)
 
@@ -297,7 +288,6 @@ def test_progress_migration_starts_with_null_boundaries_and_preserves_files(
     with factory() as db:
         progress = db.get(FileCleanupProgress, 1)
         assert progress is not None
-        assert progress.cover_cleanup_before is None
-        assert progress.source_pdf_cleanup_before is None
-        assert db.get(CoverFile, record.id).storage_key == record.storage_key
+        assert progress.cleanup_before is None
+        assert db.get(StoredFile, record.id).storage_key == record.storage_key
     assert storage.exists(record.storage_key)

@@ -51,12 +51,12 @@ class Book(Base):
     language: Mapped[str] = mapped_column(Text, CheckConstraint("length(language) > 0", name="language_nonempty"))
     cover_file_id: Mapped[int | None] = mapped_column(
         BigInteger,
-        ForeignKey("cover_files.id"),
+        ForeignKey("files.id"),
         unique=True,
     )
     source_pdf_file_id: Mapped[int | None] = mapped_column(
         BigInteger,
-        ForeignKey("source_pdf_files.id"),
+        ForeignKey("files.id"),
         unique=True,
     )
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))

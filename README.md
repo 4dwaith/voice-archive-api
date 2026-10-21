@@ -24,13 +24,18 @@ after code or dependency changes; Compose does not enable hot reload.
 | API | Purpose |
 | --- | --- |
 | `/api/v1/books` and `/{id}` | Create, list, retrieve, update, and delete books |
-| `/api/v1/cover-files` and `/api/v1/source-pdf-files` | Upload and prepare files |
-| `/api/v1/cover-files/{id}` and `/api/v1/source-pdf-files/{id}` | GET/HEAD delivery with native byte ranges; DELETE unlinked files |
+| `/api/v1/files/{kind}` | Upload and prepare a `cover` or `source_pdf` |
+| `/api/v1/files/{id}` | GET/HEAD delivery with native byte ranges; DELETE unlinked files |
 | `/api/v1/health` | Liveness without database access |
 | `/api/v1/ready` | Database readiness; used by Compose |
 
 Upload files first, then link their returned IDs through an explicit book
-create/save. Covers are normalized to WebP; PDFs retain their original bytes.
+create/save. Upload responses contain `id`, `kind`, `byte_size`, `metadata`, and
+`created_at`. Covers are normalized to WebP; PDFs retain their original bytes.
+Derived dimensions/page counts are stored in JSONB metadata. A kind registry
+selects preparation, input size limits, delivery media type, and download filename.
+Book linking validates the expected kind in the service; foreign keys and unique
+constraints enforce existence and ownership.
 Default input limits are 25 MiB per cover and 1.5 GB per PDF, configurable through
 [.env.example](.env.example).
 Book responses include nullable `cover_url` and `source_pdf_url` API paths for
@@ -61,7 +66,7 @@ midnight UTC. Scheduled jobs may run concurrently:
   retries queued byte deletions. Replacing/clearing a book's file or deleting its
   book queues its bytes in the same database transaction.
 - `orphan`: scans all regular promoted files, checking their keys against
-  both file tables in bounded batches. Bytes last modified strictly more than
+  the shared file table in bounded batches. Bytes last modified strictly more than
   seven days ago with no file record are deleted. Database lookup failures abort
   deletion of that batch; failed deletes are rediscovered on the next scan.
 
@@ -201,6 +206,13 @@ Under [src/voice_archive_api](src/voice_archive_api/), `books/` and `book_files/
 contain domain models and services; `file_handling/` provides storage and delivery;
 `api/` defines HTTP contracts; `core/` and `db/` provide configuration, dependencies,
 and database resources. `main.py` wires the application together.
+
+Migration `0008_unified_files` combines the legacy cover/PDF tables. It retains
+storage keys and metadata, shifts PDF IDs above the cover ID range, and updates
+book foreign keys in the same transaction. Clients must use the new file URLs
+returned by books. The migration resets the shared cleanup scan boundary;
+pending deletions remain intact. A downgrade requires valid cover dimensions and
+PDF page counts in metadata because the legacy tables require those columns.
 
 Schema changes belong in [Alembic migrations](alembic/versions/). Generate them
 on the host and review before applying:

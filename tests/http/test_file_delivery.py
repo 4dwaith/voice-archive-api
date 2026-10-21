@@ -25,8 +25,8 @@ def test_database_session_is_released_before_file_delivery(schema_only_client, m
 
     storage = LocalStorage(tmp_path / "uploads")
     key = storage.promote(storage.put_temporary(BytesIO(b"test PDF bytes"), max_bytes=100))
-    record = Mock(storage_key=key)
-    monkeypatch.setattr(service, "get_pdf_file", Mock(return_value=record))
+    record = Mock(storage_key=key, kind="source_pdf")
+    monkeypatch.setattr(service, "get_file", Mock(return_value=record))
     overrides = schema_only_client.app.dependency_overrides
     monkeypatch.setitem(overrides, get_db, database)
     monkeypatch.setitem(overrides, get_file_delivery, lambda: LocalFileDelivery(storage))
@@ -38,7 +38,7 @@ def test_database_session_is_released_before_file_delivery(schema_only_client, m
         await original_call(response, scope, receive, send)
 
     monkeypatch.setattr(FileResponse, "__call__", check_session_closed)
-    response = schema_only_client.request(method, "/api/v1/source-pdf-files/1")
+    response = schema_only_client.request(method, "/api/v1/files/1")
     assert response.status_code == 200
     assert response.content == (b"test PDF bytes" if method == "GET" else b"")
 

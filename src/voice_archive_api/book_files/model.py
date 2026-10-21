@@ -1,21 +1,61 @@
+from dataclasses import dataclass
 from datetime import datetime
+from enum import StrEnum
+from typing import Protocol
 
-from sqlalchemy import BigInteger, CheckConstraint, DateTime, Identity, Index, Integer, Text
+from sqlalchemy import BigInteger, CheckConstraint, DateTime, Enum, Identity, Index, Integer, Text
+from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column
 
+from voice_archive_api.file_handling import BinarySource, Storage
 from voice_archive_api.db.base import Base
 
 
-class StoredFileBase(Base):
-    """Abstract ORM base whose storage columns are copied into each file table."""
+class FileKind(StrEnum):
+    COVER = "cover"
+    SOURCE_PDF = "source_pdf"
 
-    __abstract__ = True
+
+@dataclass(frozen=True)
+class PreparedFile:
+    storage_key: str
+    byte_size: int
+    metadata: dict[str, int | str]
+
+
+class Preparer(Protocol):
+    def __call__(self, source: BinarySource, storage: Storage, *, max_bytes: int) -> PreparedFile: ...
+
+
+@dataclass(frozen=True)
+class FileStrategy:
+    prepare: Preparer
+    limit_setting_key: str
+    media_type: str
+    filename: str
+
+
+class StoredFile(Base):
+    """Prepared immutable bytes; kind-specific metadata is extracted on upload."""
+
+    __tablename__ = "files"
+    __table_args__ = (Index("ix_files_created_at_id", "created_at", "id"),)
 
     id: Mapped[int] = mapped_column(
         BigInteger,
         Identity(),
         CheckConstraint("id > 0", name="positive_id"),
         primary_key=True,
+    )
+    kind: Mapped[FileKind] = mapped_column(
+        Enum(
+            FileKind,
+            native_enum=False,
+            create_constraint=True,
+            validate_strings=True,
+            values_callable=lambda members: [member.value for member in members],
+            name="file_kind",
+        ),
     )
     storage_key: Mapped[str] = mapped_column(
         Text,
@@ -26,35 +66,8 @@ class StoredFileBase(Base):
         BigInteger,
         CheckConstraint("byte_size > 0", name="positive_byte_size"),
     )
+    file_metadata: Mapped[dict[str, int | str]] = mapped_column("metadata", JSONB)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
-
-
-class CoverFile(StoredFileBase):
-    """A prepared WebP cover, ready to be linked to a book."""
-
-    __tablename__ = "cover_files"
-    __table_args__ = (Index("ix_cover_files_created_at_id", "created_at", "id"),)
-
-    width: Mapped[int] = mapped_column(
-        Integer,
-        CheckConstraint("width > 0", name="positive_width"),
-    )
-    height: Mapped[int] = mapped_column(
-        Integer,
-        CheckConstraint("height > 0", name="positive_height"),
-    )
-
-
-class SourcePdfFile(StoredFileBase):
-    """A prepared original PDF, ready to be linked to a book."""
-
-    __tablename__ = "source_pdf_files"
-    __table_args__ = (Index("ix_source_pdf_files_created_at_id", "created_at", "id"),)
-
-    page_count: Mapped[int] = mapped_column(
-        Integer,
-        CheckConstraint("page_count > 0", name="positive_page_count"),
-    )
 
 
 class PendingFileDeletion(Base):
@@ -71,7 +84,7 @@ class PendingFileDeletion(Base):
 
 
 class FileCleanupProgress(Base):
-    """One row holding the completed scan boundary for each prepared-file table."""
+    """One row holding the completed scan boundary for prepared files."""
 
     __tablename__ = "file_cleanup_progress"
 
@@ -81,5 +94,4 @@ class FileCleanupProgress(Base):
         primary_key=True,
         autoincrement=False,
     )
-    cover_cleanup_before: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
-    source_pdf_cleanup_before: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    cleanup_before: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))

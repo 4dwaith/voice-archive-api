@@ -8,7 +8,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from voice_archive_api.book_files import service as file_service
-from voice_archive_api.book_files.model import CoverFile, SourcePdfFile
+from voice_archive_api.book_files.model import StoredFile
 from voice_archive_api.books.constants import (
     FOREIGN_KEY_BOOK_COVER_FILE,
     FOREIGN_KEY_BOOK_SOURCE_PDF_FILE,
@@ -57,28 +57,23 @@ def book_write(db: Session) -> Iterator[None]:
             constraint = (
                 exc.orig.diag.constraint_name if isinstance(exc.orig, (UniqueViolation, ForeignKeyViolation)) else None
             )
-            if isinstance(exc.orig, UniqueViolation):
-                if constraint == UNIQUE_BOOK_IDENTITY:
-                    raise DuplicateBook from exc
-                if constraint == UNIQUE_BOOK_COVER_FILE:
-                    raise file_service.CoverFileAlreadyLinked from exc
-                if constraint == UNIQUE_BOOK_SOURCE_PDF_FILE:
-                    raise file_service.SourcePdfFileAlreadyLinked from exc
-            if isinstance(exc.orig, ForeignKeyViolation):
-                # A file can disappear after lookup but before the book commits.
-                if constraint == FOREIGN_KEY_BOOK_COVER_FILE:
-                    raise file_service.CoverFileNotFound from exc
-                if constraint == FOREIGN_KEY_BOOK_SOURCE_PDF_FILE:
-                    raise file_service.SourcePdfFileNotFound from exc
+            errors = {
+                UNIQUE_BOOK_IDENTITY: DuplicateBook,
+                UNIQUE_BOOK_COVER_FILE: file_service.FileAlreadyLinked,
+                UNIQUE_BOOK_SOURCE_PDF_FILE: file_service.FileAlreadyLinked,
+                FOREIGN_KEY_BOOK_COVER_FILE: file_service.FileNotFound,
+                FOREIGN_KEY_BOOK_SOURCE_PDF_FILE: file_service.FileNotFound,
+            }
+            if constraint is not None and (error := errors.get(constraint)):
+                raise error from exc
         raise
 
 
 def check_file_links(db: Session, changes: dict) -> None:
     """Only persisted, successfully prepared files can be linked to a book."""
-    if (cover_id := changes.get("cover_file_id")) is not None:
-        file_service.get_cover_file(db, cover_id)
-    if (pdf_id := changes.get("source_pdf_file_id")) is not None:
-        file_service.get_pdf_file(db, pdf_id)
+    for kind, field in file_service.BOOK_FILE_FIELDS.items():
+        if (file_id := changes.get(field)) is not None:
+            file_service.get_file(db, file_id, expected_kind=kind)
 
 
 def list_books(db: Session, *, limit: int = 50, offset: int = 0) -> tuple[list[Book], int]:
@@ -124,14 +119,11 @@ def patch_book(db: Session, book_id: int, payload: BookPatch) -> Book:
         check_file_links(db, changes)
 
         # If files were updated for a book, delete the old files
-        old_files: list[CoverFile | SourcePdfFile] = []
-        for field, get_file in (
-            ("cover_file_id", file_service.get_cover_file),
-            ("source_pdf_file_id", file_service.get_pdf_file),
-        ):
+        old_files: list[StoredFile] = []
+        for field in file_service.BOOK_FILE_FIELDS.values():
             old_id = getattr(book, field)
             if field in changes and old_id is not None and old_id != changes[field]:
-                old_files.append(get_file(db, old_id))
+                old_files.append(file_service.get_file(db, old_id))
 
         for field, value in changes.items():
             setattr(book, field, value)
@@ -158,13 +150,11 @@ def delete_book(db: Session, book_id: int) -> bool:
         if book is None:
             return False
 
-        old_files: list[CoverFile | SourcePdfFile] = []
+        old_files: list[StoredFile] = []
 
-        if book.cover_file_id is not None:
-            old_files.append(file_service.get_cover_file(db, book.cover_file_id))
-
-        if book.source_pdf_file_id is not None:
-            old_files.append(file_service.get_pdf_file(db, book.source_pdf_file_id))
+        for field in file_service.BOOK_FILE_FIELDS.values():
+            if (file_id := getattr(book, field)) is not None:
+                old_files.append(file_service.get_file(db, file_id))
 
         db.delete(book)
         # Same as the patch method - flush the book delete so that there's no foreign key pointing to the file rows

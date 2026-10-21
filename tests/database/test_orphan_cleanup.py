@@ -9,8 +9,8 @@ import pytest
 from sqlalchemy import event
 from sqlalchemy.orm import sessionmaker
 
+from voice_archive_api.book_files.model import FileKind, StoredFile
 from voice_archive_api.book_files import cleanup
-from voice_archive_api.book_files.model import CoverFile, SourcePdfFile
 from voice_archive_api.file_handling import LocalStorage
 
 NOW = datetime(2026, 10, 21, tzinfo=UTC)
@@ -34,9 +34,9 @@ def save_new_file(storage, days=8):
 
 
 def add_reference(factory, key, model):
-    values = {"width": 1, "height": 1} if model is CoverFile else {"page_count": 1}
+    values = {"file_metadata": {}}
     with factory.begin() as db:
-        db.add(model(storage_key=key, byte_size=12, created_at=NOW, **values))
+        db.add(StoredFile(kind=model, storage_key=key, byte_size=12, created_at=NOW, **values))
 
 
 def test_scan_batches_file_lookups(factory, storage, monkeypatch, test_engine):
@@ -46,8 +46,8 @@ def test_scan_batches_file_lookups(factory, storage, monkeypatch, test_engine):
     boundary = save_new_file(storage, 7)
     recent = save_new_file(storage, 6)
     cover, pdf = save_new_file(storage, 30), save_new_file(storage, 30)
-    add_reference(factory, cover, CoverFile)
-    add_reference(factory, pdf, SourcePdfFile)
+    add_reference(factory, cover, FileKind.COVER)
+    add_reference(factory, pdf, FileKind.SOURCE_PDF)
     temporary = storage.put_temporary(BytesIO(b"temporary"), max_bytes=100)
     queries = []
 
@@ -66,9 +66,8 @@ def test_scan_batches_file_lookups(factory, storage, monkeypatch, test_engine):
     assert result.failures == 0
     assert not storage.exists(orphan)
     assert all(storage.exists(key) for key in (boundary, recent, cover, pdf, temporary))
-    # Three eligible files in two batches: two union queries, not one per file.
+    # Three eligible files in two batches: two queries, not one per file.
     assert len(queries) == 2
-    assert all("UNION ALL" in statement for statement in queries)
     assert cleanup.run_orphan_cleanup(factory, storage, now=NOW).files_deleted == 0
 
 
@@ -115,7 +114,7 @@ def test_reference_created_after_enumeration_is_seen_before_deletion(factory, st
 
     def candidates(**kwargs):
         yield key
-        add_reference(factory, key, SourcePdfFile)
+        add_reference(factory, key, FileKind.SOURCE_PDF)
 
     wrapped_storage.iter_promoted.side_effect = candidates
     assert cleanup.run_orphan_cleanup(factory, wrapped_storage, now=NOW).files_deleted == 0

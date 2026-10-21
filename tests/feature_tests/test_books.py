@@ -400,15 +400,16 @@ def page_contents(state, count, total, skip, size):
 
 
 def file_id_field(kind):
-    return "cover_file_id" if kind == "cover" else "source_pdf_file_id"
+    return {"cover": "cover_file_id", "source PDF": "source_pdf_file_id"}[kind]
 
 
 @given(parsers.re(r'a prepared (?P<kind>cover|source PDF) named "(?P<name>[^"]+)" exists'))
 def seed_file(client, state, kind, name):
-    if kind == "cover":
-        path, filename, content, media_type = "/api/v1/cover-files", "cover.png", cover_bytes(), "image/png"
-    else:
-        path, filename, content, media_type = "/api/v1/source-pdf-files", "source.pdf", pdf_bytes(), "application/pdf"
+    file_kind, filename, make_content, media_type = {
+        "cover": ("cover", "cover.png", cover_bytes, "image/png"),
+        "source PDF": ("source_pdf", "source.pdf", pdf_bytes, "application/pdf"),
+    }[kind]
+    path, content = f"/api/v1/files/{file_kind}", make_content()
     response = client.post(path, files={"file": (filename, content, media_type)})
     assert response.status_code == 201, response.text
     state.prepared_file_ids[name] = response.json()["id"]
@@ -451,14 +452,14 @@ def linked_to_file(client, state, kind, name):
     assert saved[field_name] == state.prepared_file_ids[name]
     listed = next(book for book in fetch_library(client) if book["id"] == state.selected["id"])
     assert listed[field_name] == state.prepared_file_ids[name]
-    url_field = "cover_url" if kind == "cover" else "source_pdf_url"
-    path = "cover-files" if kind == "cover" else "source-pdf-files"
+    url_field = {"cover": "cover_url", "source PDF": "source_pdf_url"}[kind]
+    path = "files"
     expected_url = f"/api/v1/{path}/{state.prepared_file_ids[name]}"
     for book in (result(state).json(), saved, listed):
         assert book[url_field] == expected_url
     delivered = client.get(saved[url_field])
     assert delivered.status_code == 200, delivered.text
-    assert delivered.headers["content-type"] == ("image/webp" if kind == "cover" else "application/pdf")
+    assert delivered.headers["content-type"] == {"cover": "image/webp", "source PDF": "application/pdf"}[kind]
 
 
 @then(parsers.re(r'the book has no (?P<kind>cover|source PDF) link'))
@@ -466,7 +467,7 @@ def file_link_absent(client, state, kind):
     assert result(state).json()[file_id_field(kind)] is None
     saved = fetch_saved_book(client, state)
     assert saved[file_id_field(kind)] is None
-    url_field = "cover_url" if kind == "cover" else "source_pdf_url"
+    url_field = {"cover": "cover_url", "source PDF": "source_pdf_url"}[kind]
     assert result(state).json()[url_field] is None
     assert saved[url_field] is None
 
@@ -474,24 +475,21 @@ def file_link_absent(client, state, kind):
 @then(parsers.re(r'the original (?P<kind>cover|source PDF) can no longer be retrieved'))
 def original_file_removed(client, state, kind):
     file_id = state.original[file_id_field(kind)]
-    path = "cover-files" if kind == "cover" else "source-pdf-files"
+    path = "files"
     response = client.get(f"/api/v1/{path}/{file_id}")
     assert response.status_code == 404, response.text
-    prefix = "cover" if kind == "cover" else "source_pdf"
-    assert response.json()["error"]["code"] == f"{prefix}_file_not_found"
+    assert response.json()["error"]["code"] == "file_not_found"
 
 
 @then(parsers.re(r'I am told that the (?P<kind>cover|source PDF) file cannot be found'))
 def file_not_found(state, kind):
     response = result(state)
     assert response.status_code == 404, response.text
-    prefix = "cover" if kind == "cover" else "source_pdf"
-    assert response.json()["error"]["code"] == f"{prefix}_file_not_found"
+    assert response.json()["error"]["code"] == "file_not_found"
 
 
 @then(parsers.re(r'I am told that the (?P<kind>cover|source PDF) file is already linked'))
 def file_already_linked(state, kind):
     response = result(state)
     assert response.status_code == 409, response.text
-    prefix = "cover" if kind == "cover" else "source_pdf"
-    assert response.json()["error"]["code"] == f"{prefix}_file_already_linked"
+    assert response.json()["error"]["code"] == "file_already_linked"

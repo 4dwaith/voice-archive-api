@@ -9,13 +9,11 @@ from sqlalchemy.orm import Session
 
 from voice_archive_api.db.session import get_db
 from voice_archive_api.api.v1.books import router as books_router
-from voice_archive_api.api.v1.cover_files import router as cover_files_router
-from voice_archive_api.api.v1.source_pdf_files import router as source_pdf_files_router
+from voice_archive_api.api.v1.files import router as files_router
 
 router = APIRouter()
 router.include_router(books_router)
-router.include_router(cover_files_router)
-router.include_router(source_pdf_files_router)
+router.include_router(files_router)
 
 
 class HealthResponse(BaseModel):
