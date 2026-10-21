@@ -2,14 +2,11 @@ from collections.abc import Iterator
 from contextlib import contextmanager
 from datetime import UTC, datetime
 
-from sqlalchemy import and_, exists, select
-from sqlalchemy.orm import InstrumentedAttribute, Session
-from sqlalchemy.sql.elements import ColumnElement
+from sqlalchemy.orm import Session
 
 from voice_archive_api.book_files.covers import prepare_cover
 from voice_archive_api.book_files.model import FileKind, FileStrategy, PendingFileDeletion, StoredFile
 from voice_archive_api.book_files.pdfs import prepare_pdf
-from voice_archive_api.books.model import Book
 from voice_archive_api.core.errors import ApplicationError
 from voice_archive_api.file_handling import BinarySource, Storage
 
@@ -55,20 +52,13 @@ def get_file(db: Session, file_id: int, *, expected_kind: FileKind | None = None
     return record
 
 
-def file_is_unlinked(file_id: int | InstrumentedAttribute[int] = StoredFile.id) -> ColumnElement[bool]:
-    """Build independent NOT EXISTS checks so cleanup can use indexed anti joins."""
-    return and_(
-        *(~exists(select(Book.id).where(getattr(Book, field) == file_id)) for field in BOOK_FILE_FIELDS.values())
-    )
-
-
 def delete_file(db: Session, file_id: int) -> None:
-    """Delete an unlinked row and queue its bytes, serializing with FK claims."""
+    """Delete an unlinked row and queue its bytes, serializing with ownership updates."""
     with file_write(db):
         record = db.get(StoredFile, file_id, with_for_update=True, populate_existing=True)
         if record is None:
             raise FileNotFound
-        if not db.scalar(select(file_is_unlinked(file_id))):
+        if record.book_id is not None:
             raise FileAlreadyLinked
         queue_file_deletion(db, record, now=datetime.now(UTC))
         db.commit()

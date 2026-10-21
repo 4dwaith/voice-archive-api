@@ -9,7 +9,7 @@ from sqlalchemy import exists, select, tuple_
 from sqlalchemy.orm import Session, sessionmaker
 
 from voice_archive_api.book_files.model import FileCleanupProgress, PendingFileDeletion, StoredFile
-from voice_archive_api.book_files.service import file_is_unlinked, queue_file_deletion
+from voice_archive_api.book_files.service import queue_file_deletion
 from voice_archive_api.file_handling import Storage
 
 logger = logging.getLogger(__name__)
@@ -29,15 +29,15 @@ def queue_expired_files(factory: sessionmaker[Session], now: datetime) -> int:
     """Scan indexed age windows, retaining one day of overlap for late commits."""
     total = 0
     cutoff = now - UNLINKED_RETENTION
-    conditions = [StoredFile.created_at < cutoff, file_is_unlinked()]
+    conditions = [StoredFile.unlinked_at < cutoff, StoredFile.book_id.is_(None)]
     with factory() as db:
         progress = db.get(FileCleanupProgress, 1)
         assert progress is not None
         boundary = progress.cleanup_before
     if boundary is not None:
-        conditions.append(StoredFile.created_at >= boundary - SCAN_OVERLAP)
+        conditions.append(StoredFile.unlinked_at >= boundary - SCAN_OVERLAP)
 
-    # Stores the (created_at, id) of the last record processed
+    # Stores the (unlinked_at, id) of the last record processed
     cursor = None
 
     # Paginate with cursor. It breaks out of the loop when there are no more records to process.
@@ -50,13 +50,13 @@ def queue_expired_files(factory: sessionmaker[Session], now: datetime) -> int:
             query = select(StoredFile).where(*conditions)
 
             if cursor is not None:
-                query = query.where(tuple_(StoredFile.created_at, StoredFile.id) > cursor)
+                query = query.where(tuple_(StoredFile.unlinked_at, StoredFile.id) > cursor)
 
             # Select one batch of records - limited by batch size, offset by the cursor,
             # skipping anything that's currently being modified by the application
             records = list(
                 db.scalars(
-                    query.order_by(StoredFile.created_at, StoredFile.id)
+                    query.order_by(StoredFile.unlinked_at, StoredFile.id)
                     .limit(BATCH_SIZE)
                     .with_for_update(skip_locked=True)
                 )
@@ -77,24 +77,9 @@ def queue_expired_files(factory: sessionmaker[Session], now: datetime) -> int:
                 break
 
             # There are records to process. Update the last record's values as the cursor
-            cursor = (records[-1].created_at, records[-1].id)
-
-            # Recheck the whole locked batch in one fresh READ COMMITTED query.
-            # The row is locked with FOR UPDATE which prevents any foreign key references,
-            # but it's possible that the row was linked to after the condition was met, but before we acquired the lock.
-            unlinked_ids = set(
-                db.scalars(
-                    select(StoredFile.id).where(
-                        StoredFile.id.in_([record.id for record in records]),
-                        file_is_unlinked(),
-                    )
-                )
-            )
+            cursor = (records[-1].unlinked_at, records[-1].id)
 
             for record in records:
-                if record.id not in unlinked_ids:
-                    continue
-
                 # Won't cause an N + 1 query, since we're not reading from the database.
                 # These writes will be accumulated in memory, and sent forward in one flush
                 queue_file_deletion(db, record, now=now)

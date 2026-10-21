@@ -7,6 +7,7 @@ from sqlalchemy.engine import URL
 from sqlalchemy.orm import Session, sessionmaker
 
 from voice_archive_api.core.dependencies import get_app_state
+from voice_archive_api.db import models  # noqa: F401 - register all foreign-key targets for standalone jobs
 
 
 def create_database_engine(database_url: str | URL) -> Engine:

@@ -80,6 +80,7 @@ def uploaded_file(test_engine, storage, state, kind, days):
         payload = {FileKind.COVER: cover_bytes, FileKind.SOURCE_PDF: pdf_bytes}[file_kind]()
         record = file_service.create_file(db, file_kind, BytesIO(payload), storage, max_bytes=100_000)
         record.created_at = datetime.now(UTC) - timedelta(days=days)
+        record.unlinked_at = record.created_at
         db.commit()
         state.file = record
 

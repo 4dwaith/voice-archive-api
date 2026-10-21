@@ -3,7 +3,7 @@ from io import BytesIO
 from unittest.mock import Mock
 
 import pytest
-from sqlalchemy import event
+from sqlalchemy import event, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import sessionmaker
 
@@ -36,6 +36,7 @@ def prepared_file(factory, storage, kind, age=timedelta(days=8)):
         payload = {"cover": cover_bytes, "source_pdf": pdf_bytes}[kind]()
         record = service.create_file(db, FileKind(kind), BytesIO(payload), storage, max_bytes=100_000)
         record.created_at = NOW - age
+        record.unlinked_at = NOW - age
         db.commit()
         return record
 
@@ -115,21 +116,18 @@ def test_failed_acknowledgment_after_unlink_can_retry_an_absent_file(factory, st
 def test_concurrent_book_save_prevents_expiration(factory, storage, kind):
     record = prepared_file(factory, storage, kind)
     with factory.begin() as saving:
-        # An uncommitted FK reference holds KEY SHARE on the prepared file.
-        # Cleanup must skip that row even though it cannot yet see this book.
-        saving.add(
-            Book(
-                title="Being saved",
-                normalized_title="being saved",
-                normalized_author="",
-                language="en",
-                created_at=NOW,
-                updated_at=NOW,
-                **{f"{kind}_file_id": record.id},
-            )
+        # An uncommitted ownership update locks the file itself.
+        book = Book(
+            title="Being saved",
+            normalized_title="being saved",
+            normalized_author="",
+            language="en",
+            created_at=NOW,
+            updated_at=NOW,
         )
-        # Flushing the book has locked the file record, so cleanup should not see it
+        saving.add(book)
         saving.flush()
+        saving.execute(update(StoredFile).where(StoredFile.id == record.id).values(book_id=book.id))
         result = cleanup.run_promoted_cleanup(factory, storage, now=NOW)
         assert result.prepared_files_expired == result.files_deleted == 0
     with factory() as db:
@@ -146,13 +144,12 @@ def test_cleanup_processes_multiple_batches(factory, storage, monkeypatch):
 
 
 @pytest.mark.parametrize("kind", ["cover", "source_pdf"])
-def test_link_recheck_uses_one_query_for_the_whole_batch(factory, storage, test_engine, kind):
+def test_cleanup_never_queries_book_references(factory, storage, test_engine, kind):
     records = [prepared_file(factory, storage, kind) for _ in range(5)]
     reference_queries = []
 
     def capture_reference_query(connection, cursor, statement, parameters, context, executemany):
-        # The batch recheck returns IDs only; candidate scans return full rows.
-        if statement.startswith("SELECT files.id ") and "FROM books" in statement:
+        if "FROM books" in statement:
             reference_queries.append(statement)
 
     event.listen(test_engine, "before_cursor_execute", capture_reference_query)
@@ -160,7 +157,7 @@ def test_link_recheck_uses_one_query_for_the_whole_batch(factory, storage, test_
         assert cleanup.queue_expired_files(factory, NOW) == len(records)
     finally:
         event.remove(test_engine, "before_cursor_execute", capture_reference_query)
-    assert len(reference_queries) == 1
+    assert reference_queries == []
     with factory() as db:
         for record in records:
             assert db.get(type(record), record.id) is None
@@ -275,8 +272,8 @@ def test_failed_book_commit_preserves_links_file_records_and_bytes(factory, stor
 
     @event.listens_for(factory, "before_commit")
     def interrupt_commit(db):
-        if any(isinstance(record, PendingFileDeletion) for record in db.new):
-            raise RuntimeError("book commit interrupted")
+        assert db.get(PendingFileDeletion, old.storage_key) is not None
+        raise RuntimeError("book commit interrupted")
 
     with factory() as db, pytest.raises(RuntimeError, match="book commit interrupted"):
         if action == "delete":

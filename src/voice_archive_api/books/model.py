@@ -4,15 +4,16 @@ from sqlalchemy import (
     BigInteger,
     CheckConstraint,
     DateTime,
-    ForeignKey,
     Identity,
     Index,
     String,
     Text,
+    select,
     text,
 )
-from sqlalchemy.orm import Mapped, mapped_column
+from sqlalchemy.orm import Mapped, column_property, mapped_column
 
+from voice_archive_api.book_files.model import FileKind, StoredFile
 from voice_archive_api.books.constants import (
     AUTHOR_LIMIT,
     DESCRIPTION_LIMIT,
@@ -49,15 +50,17 @@ class Book(Base):
     normalized_author: Mapped[str] = mapped_column(Text)
     description: Mapped[str | None] = mapped_column(String(DESCRIPTION_LIMIT))
     language: Mapped[str] = mapped_column(Text, CheckConstraint("length(language) > 0", name="language_nonempty"))
-    cover_file_id: Mapped[int | None] = mapped_column(
-        BigInteger,
-        ForeignKey("files.id"),
-        unique=True,
+    cover_file_id: Mapped[int | None] = column_property(
+        select(StoredFile.id)
+        .where(StoredFile.book_id == id, StoredFile.kind == FileKind.COVER)
+        .correlate_except(StoredFile)
+        .scalar_subquery()
     )
-    source_pdf_file_id: Mapped[int | None] = mapped_column(
-        BigInteger,
-        ForeignKey("files.id"),
-        unique=True,
+    source_pdf_file_id: Mapped[int | None] = column_property(
+        select(StoredFile.id)
+        .where(StoredFile.book_id == id, StoredFile.kind == FileKind.SOURCE_PDF)
+        .correlate_except(StoredFile)
+        .scalar_subquery()
     )
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))

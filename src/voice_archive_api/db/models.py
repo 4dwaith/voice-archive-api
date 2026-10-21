@@ -1,4 +1,4 @@
-"""Import every domain model here so Alembic sees the complete metadata."""
+"""Register complete model metadata for migrations and application sessions."""
 
 from voice_archive_api.book_files.model import FileCleanupProgress, PendingFileDeletion, StoredFile
 from voice_archive_api.books.model import Book

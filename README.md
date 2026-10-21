@@ -34,8 +34,13 @@ create/save. Upload responses contain `id`, `kind`, `byte_size`, `metadata`, and
 `created_at`. Covers are normalized to WebP; PDFs retain their original bytes.
 Derived dimensions/page counts are stored in JSONB metadata. A kind registry
 selects preparation, input size limits, delivery media type, and download filename.
-Book linking validates the expected kind in the service; foreign keys and unique
-constraints enforce existence and ownership.
+Files hold an optional `book_id` foreign key, with one file per `(book_id, kind)`.
+Book cover/PDF IDs are derived from those rows; their kind determines their role.
+The service validates requested IDs and atomically claims unowned files.
+Database constraints enforce ownership and the supported book file kinds.
+Deleting a linked file row is rejected by a database trigger, including direct
+SQL deletes. Book operations detach old files before deleting them and queueing
+their bytes, all in the same transaction.
 Default input limits are 25 MiB per cover and 1.5 GB per PDF, configurable through
 [.env.example](.env.example).
 Book responses include nullable `cover_url` and `source_pdf_url` API paths for
@@ -62,13 +67,20 @@ The `maintenance` service runs three independent jobs at startup and daily at
 midnight UTC. Scheduled jobs may run concurrently:
 
 - `temporary`: removes temporary files inactive for 24 hours.
-- `promoted`: removes unlinked prepared-file records older than seven days and
+- `promoted`: removes prepared-file records unlinked for more than seven days and
   retries queued byte deletions. Replacing/clearing a book's file or deleting its
   book queues its bytes in the same database transaction.
 - `orphan`: scans all regular promoted files, checking their keys against
   the shared file table in bounded batches. Bytes last modified strictly more than
   seven days ago with no file record are deleted. Database lookup failures abort
   deletion of that batch; failed deletes are rediscovered on the next scan.
+
+A database trigger initializes `unlinked_at` to `created_at` for new uploads,
+clears it on attachment, and resets it to the database statement time on
+detachment. Direct book deletion uses `ON DELETE SET NULL`, preserving files
+for this grace period. Cleanup scans `(unlinked_at, id)`, so an old file detached
+after a completed scan is still visited. API replacements, clears, and book
+deletions continue to queue old files immediately.
 
 The grace period protects uploads between promotion and database commit. Files
 are immutable after promotion; operators must not reuse keys or restore old
@@ -215,6 +227,14 @@ book foreign keys in the same transaction. Clients must use the new file URLs
 returned by books. The migration resets the shared cleanup scan boundary;
 pending deletions remain intact. A downgrade requires valid cover dimensions and
 PDF page counts in metadata because the legacy tables require those columns.
+
+Migration `0009_file_ownership` moves book links onto `files.book_id`, backfills
+`unlinked_at` for unattached uploads, installs the ownership timestamp trigger,
+and resets the cleanup boundary. It refuses legacy links whose kind disagrees
+with their book field. Downgrading restores the book-side links.
+
+Migration `0010_protect_linked_files` adds a database trigger rejecting deletion
+of file rows whose `book_id` is set. Detachment must happen before deletion.
 
 Schema changes belong in [Alembic migrations](alembic/versions/). Generate them
 on the host and review before applying:

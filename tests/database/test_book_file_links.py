@@ -159,15 +159,8 @@ def assert_removal_after_lookup_rejects_save(
 
 def assert_linked_file_cannot_be_deleted(test_engine, *, model, file_id, file_field_key):
     with Session(test_engine) as db:
-        book_id = service.create_book(
-            db,
-            BookCreate(
-                title="Owner",
-                language="en",
-                **{file_field_key: file_id},
-            ),
-        ).id
-    with Session(test_engine) as db, pytest.raises(IntegrityError):
+        book_id = service.create_book(db, BookCreate(title="Owner", language="en", **{file_field_key: file_id})).id
+    with Session(test_engine) as db, pytest.raises(IntegrityError, match="Cannot delete a linked file"):
         db.execute(delete(model).where(model.id == file_id))
         db.commit()
     with Session(test_engine) as db:

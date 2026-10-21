@@ -3,10 +3,23 @@ from datetime import datetime
 from enum import StrEnum
 from typing import Protocol
 
-from sqlalchemy import BigInteger, CheckConstraint, DateTime, Enum, Identity, Index, Integer, Text
+from sqlalchemy import (
+    BigInteger,
+    CheckConstraint,
+    DateTime,
+    Enum,
+    FetchedValue,
+    ForeignKey,
+    Identity,
+    Index,
+    Integer,
+    Text,
+    UniqueConstraint,
+)
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column
 
+from voice_archive_api.book_files.constants import UNIQUE_FILE_BOOK_KIND
 from voice_archive_api.db.base import Base
 from voice_archive_api.file_handling import BinarySource, Storage
 
@@ -39,7 +52,12 @@ class StoredFile(Base):
     """Prepared immutable bytes; kind-specific metadata is extracted on upload."""
 
     __tablename__ = "files"
-    __table_args__ = (Index("ix_files_created_at_id", "created_at", "id"),)
+    __table_args__ = (
+        Index("ix_files_unlinked_at_id", "unlinked_at", "id"),
+        UniqueConstraint("book_id", "kind", name=UNIQUE_FILE_BOOK_KIND),
+        CheckConstraint("(book_id IS NULL) = (unlinked_at IS NOT NULL)", name="ownership_timestamp"),
+        CheckConstraint("book_id IS NULL OR kind IN ('cover', 'source_pdf')", name="book_kind"),
+    )
 
     id: Mapped[int] = mapped_column(
         BigInteger,
@@ -68,6 +86,10 @@ class StoredFile(Base):
     )
     file_metadata: Mapped[dict[str, int | str]] = mapped_column("metadata", JSONB)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    book_id: Mapped[int | None] = mapped_column(BigInteger, ForeignKey("books.id", ondelete="SET NULL"))
+    unlinked_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), server_default=FetchedValue(), server_onupdate=FetchedValue()
+    )
 
 
 class PendingFileDeletion(Base):
