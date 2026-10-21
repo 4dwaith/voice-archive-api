@@ -147,6 +147,47 @@ uv injects `.env` into the process. For IDE runs, select the `.venv` interpreter
 use this directory as the working directory, and inject the same environment
 variables.
 
+## PyCharm Run/Debug
+
+Open this directory as the project and use `.venv/Scripts/python.exe` (Python
+3.14). The saved configurations in `.run/` use the project root as their working
+directory:
+
+- **Application** (FastAPI): runs `voice_archive_api.main:app` on
+  `127.0.0.1:8000` with reload. Uvicorn loads `.env` through `--env-file`.
+  Both Run and Debug use this configuration; the explicit application name is
+  `app` because the app uses a custom FastAPI subclass.
+- **Database migrations** (Python module): runs `alembic upgrade head`, loading
+  `.env`. Run this before the app on a new database or after migration changes.
+- **Tests** (pytest): runs the complete `tests` directory, loading `.env.test`.
+  The native test tree supports navigating and rerunning individual failures.
+- **Tests (parallel)** (pytest): runs the same suite using four worker processes
+  (`-n 4 --dist worksteal`) and a separate `.pytest-tmp-parallel` directory.
+  Use this for full-suite runs and **Tests** for stepping through a test in Debug.
+  Each worker uses the same test PostgreSQL service, with unique per-test databases.
+  More workers can increase database contention; benchmark before raising the count.
+
+Keep PostgreSQL running with `docker compose --profile test up -d --wait db db-test`.
+Stop the Compose `api` service before running **Application** to free port 8000.
+The application and tests run in the host interpreter; only their databases run
+in Docker.
+
+Create the ignored `.env.test` locally with these variables, using the
+`VOICE_ARCHIVE_TEST_POSTGRES_*` credentials and port from `.env`:
+
+```dotenv
+VOICE_ARCHIVE_ENVIRONMENT=test
+VOICE_ARCHIVE_POSTGRES_HOST=127.0.0.1
+VOICE_ARCHIVE_POSTGRES_PORT=5433
+VOICE_ARCHIVE_POSTGRES_USER=voice_archive_test
+VOICE_ARCHIVE_POSTGRES_PASSWORD=voice_archive_test
+VOICE_ARCHIVE_POSTGRES_DB=voice_archive_test
+```
+
+The development `.env` targets `voice_archive` on port 5432. Tests require
+`voice_archive_test` and create/drop separate randomly named databases per test.
+Credentials stay in the ignored environment files, outside the saved configurations.
+
 ## Code and migrations
 
 Under [src/voice_archive_api](src/voice_archive_api/), `books/` and `book_files/`
