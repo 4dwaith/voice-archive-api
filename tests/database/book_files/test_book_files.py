@@ -31,7 +31,13 @@ def create_file(db, storage, kind):
 
 
 def file_record(kind=FileKind.COVER, **changes):
-    values = dict(kind=kind, storage_key="opaque/key", byte_size=100, created_at=datetime.now(UTC), file_metadata={})
+    values = dict(
+        kind=kind,
+        storage_key="opaque/key",
+        byte_size=100,
+        created_at=datetime.now(UTC),
+        file_metadata={"width": 16, "height": 24} if kind == FileKind.COVER else {"page_count": 3},
+    )
     values.update(changes)
     return StoredFile(**values)
 
@@ -175,11 +181,11 @@ def test_storage_key_is_unique_across_kinds(test_engine):
             db.commit()
 
 
-def test_metadata_does_not_require_kind_specific_database_fields(test_engine):
+def test_metadata_allows_extra_fields_alongside_required_kind_fields(test_engine):
     with Session(test_engine) as db:
-        db.add(file_record(file_metadata={"custom": "value"}))
+        db.add(file_record(file_metadata={"width": 16, "height": 24, "custom": "value"}))
         db.commit()
-        assert db.scalars(select(StoredFile)).one().file_metadata == {"custom": "value"}
+        assert db.scalars(select(StoredFile)).one().file_metadata == {"width": 16, "height": 24, "custom": "value"}
 
 
 def test_file_size_supports_more_than_2gb(test_engine):

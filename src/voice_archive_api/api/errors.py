@@ -63,8 +63,11 @@ COMMON_ERROR_RESPONSES = {
 def install_error_handlers(app: FastAPI) -> None:
     @app.exception_handler(ApplicationError)
     async def application_error(request: Request, exc: ApplicationError) -> JSONResponse:
+        status = APPLICATION_ERROR_STATUSES.get(getattr(exc, "code", ""))
+        if status is None:
+            return await unexpected_error(request, exc)
         return JSONResponse(
-            status_code=APPLICATION_ERROR_STATUSES[exc.code],
+            status_code=status,
             content={"error": {"code": exc.code, "message": exc.message}},
         )
 

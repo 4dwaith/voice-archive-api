@@ -16,6 +16,7 @@ from voice_archive_api.book_files.pdfs import EncryptedPdfNotSupported, InvalidP
 from voice_archive_api.book_files.service import FileAlreadyLinked, FileKindMismatch, FileNotFound
 from voice_archive_api.books.service import BookNotFound, DuplicateBook
 from voice_archive_api.core.config import Settings
+from voice_archive_api.core.errors import ApplicationError
 from voice_archive_api.file_handling import FileTooLarge
 from voice_archive_api.main import create_app
 
@@ -66,6 +67,14 @@ def boundary_client(tmp_path):
     def fail_inherited():
         raise MissingImportedFile("PRIVATE_EXCEPTION_TEXT")
 
+    @app.get("/test-unregistered-failure")
+    def fail_unregistered():
+        class UnregisteredError(ApplicationError):
+            code = "private_unregistered_code"
+            message = "PRIVATE_EXCEPTION_TEXT"
+
+        raise UnregisteredError
+
     @app.get("/test-log")
     async def log_request():
         logger.info("probe-start")
@@ -91,6 +100,19 @@ def test_application_error_handler_accepts_specialized_subclasses(boundary_clien
     assert response.status_code == 404
     assert response.json() == {"error": {"code": "file_not_found", "message": FileNotFound.message}}
     assert "PRIVATE_EXCEPTION_TEXT" not in response.text
+
+
+def test_unregistered_application_error_uses_generic_json_envelope(boundary_client, caplog):
+    response = boundary_client.get("/test-unregistered-failure", headers={"Origin": "http://localhost:5173"})
+    assert response.status_code == 500
+    assert response.headers["content-type"] == "application/json"
+    assert response.json() == {"error": {"code": "internal_error", "message": "An unexpected error occurred"}}
+    assert response.headers["X-Request-ID"]
+    assert response.headers["Access-Control-Allow-Origin"] == "http://localhost:5173"
+    assert "private_unregistered_code" not in response.text
+    assert "PRIVATE_EXCEPTION_TEXT" not in response.text
+    assert "UnregisteredError" in caplog.text
+    assert "PRIVATE_EXCEPTION_TEXT" not in caplog.text
 
 
 @pytest.mark.parametrize(

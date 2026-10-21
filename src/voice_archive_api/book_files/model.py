@@ -29,6 +29,15 @@ class FileKind(StrEnum):
     SOURCE_PDF = "source_pdf"
 
 
+def positive_metadata_integer(field: str) -> str:
+    """Require a present JSON integer within the legacy PostgreSQL INTEGER range."""
+    return f"""CASE
+        WHEN jsonb_typeof(metadata->'{field}') = 'number'
+             AND (metadata->>'{field}') ~ '^[1-9][0-9]*$'
+        THEN (metadata->>'{field}')::numeric <= 2147483647
+        ELSE false END"""
+
+
 @dataclass(frozen=True)
 class PreparedFile:
     storage_key: str
@@ -57,6 +66,13 @@ class StoredFile(Base):
         UniqueConstraint("book_id", "kind", name=UNIQUE_FILE_BOOK_KIND),
         CheckConstraint("(book_id IS NULL) = (unlinked_at IS NOT NULL)", name="ownership_timestamp"),
         CheckConstraint("book_id IS NULL OR kind IN ('cover', 'source_pdf')", name="book_kind"),
+        CheckConstraint(
+            f"kind <> 'cover' OR ({positive_metadata_integer('width')} AND {positive_metadata_integer('height')})",
+            name="cover_metadata",
+        ),
+        CheckConstraint(
+            f"kind <> 'source_pdf' OR ({positive_metadata_integer('page_count')})", name="source_pdf_metadata"
+        ),
     )
 
     id: Mapped[int] = mapped_column(

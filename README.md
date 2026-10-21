@@ -32,7 +32,10 @@ after code or dependency changes; Compose does not enable hot reload.
 Upload files first, then link their returned IDs through an explicit book
 create/save. Upload responses contain `id`, `kind`, `byte_size`, `metadata`, and
 `created_at`. Covers are normalized to WebP; PDFs retain their original bytes.
-Derived dimensions/page counts are stored in JSONB metadata. A kind registry
+Derived dimensions/page counts are stored in JSONB metadata. Database checks
+require cover `width`/`height` and PDF `page_count` to be positive integers in the
+PostgreSQL `INTEGER` range. The upload response is a discriminated union on
+`kind`, with required typed metadata fields for each variant. A kind registry
 selects preparation, input size limits, delivery media type, and download filename.
 Files hold an optional `book_id` foreign key, with one file per `(book_id, kind)`.
 Book cover/PDF IDs are derived from those rows; their kind determines their role.
@@ -101,6 +104,9 @@ Application errors use `{"error":{"code":"...","message":"..."}}`; validation
 errors also include `issues`. Unexpected errors return a generic `internal_error`
 500. Native file-range errors and the readiness response retain their existing
 contracts. HEAD responses have no body.
+Unregistered application errors also use the generic JSON 500 envelope;
+contract tests require every application error code to have a registered status
+and appear in its domain's OpenAPI error responses at that status.
 
 `asgi-correlation-id` assigns an `X-Request-ID` to every request, including errors
 and CORS preflights. Valid incoming UUID4 identifiers are reused; absent/invalid
@@ -235,6 +241,10 @@ with their book field. Downgrading restores the book-side links.
 
 Migration `0010_protect_linked_files` adds a database trigger rejecting deletion
 of file rows whose `book_id` is set. Detachment must happen before deletion.
+
+Migration `0011_file_metadata_constraints` restores required positive integer
+metadata checks for both kinds. It validates existing data and refuses to apply
+if any row is invalid, leaving those rows intact for correction.
 
 Schema changes belong in [Alembic migrations](alembic/versions/). Generate them
 on the host and review before applying:

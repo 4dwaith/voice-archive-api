@@ -37,10 +37,37 @@ def test_upload_body_contract_requires_a_multipart_file(openapi_document):
 
 
 def test_upload_response_contract_exposes_only_public_file_details(openapi_document):
-    schema = openapi_document["components"]["schemas"]["FileResponse"]
+    schemas = openapi_document["components"]["schemas"]
+    schema = schemas["FileResponse"]
+    variants = {"cover": "CoverFileResponse", "source_pdf": "SourcePdfFileResponse"}
+    assert schema["discriminator"] == {
+        "propertyName": "kind",
+        "mapping": {kind: f"#/components/schemas/{model}" for kind, model in variants.items()},
+    }
+    assert schema["oneOf"] == [{"$ref": f"#/components/schemas/{model}"} for model in variants.values()]
     fields = {"id", "kind", "byte_size", "metadata", "created_at"}
-    assert set(schema["properties"]) == fields
-    assert set(schema["required"]) == fields
+    for kind, model in variants.items():
+        assert set(schemas[model]["properties"]) == fields
+        assert set(schemas[model]["required"]) == fields
+        assert schemas[model]["properties"]["kind"]["const"] == kind
+
+
+@pytest.mark.parametrize(
+    "response_model,metadata_model,fields",
+    [
+        ("CoverFileResponse", "CoverMetadata", {"width", "height"}),
+        ("SourcePdfFileResponse", "SourcePdfMetadata", {"page_count"}),
+    ],
+)
+def test_upload_metadata_contract_requires_positive_integers(openapi_document, response_model, metadata_model, fields):
+    schemas = openapi_document["components"]["schemas"]
+    assert schemas[response_model]["properties"]["metadata"] == {"$ref": f"#/components/schemas/{metadata_model}"}
+    metadata = schemas[metadata_model]
+    assert set(metadata["required"]) == set(metadata["properties"]) == fields
+    for field in fields:
+        assert metadata["properties"][field]["type"] == "integer"
+        assert metadata["properties"][field]["exclusiveMinimum"] == 0
+        assert metadata["properties"][field]["maximum"] == 2_147_483_647
 
 
 @pytest.mark.parametrize("path", ["/api/v1/files/cover", "/api/v1/files/source_pdf"])

@@ -93,7 +93,11 @@ def test_unified_files_migration_preserves_overlapping_ids_metadata_and_links(
             command.downgrade(migration_config, "0007_file_cleanup_progress")
     with Session(test_engine) as db:
         record = StoredFile(
-            kind=FileKind.COVER, storage_key="promoted/new", byte_size=1, file_metadata={}, created_at=cover.created_at
+            kind=FileKind.COVER,
+            storage_key="promoted/new",
+            byte_size=1,
+            file_metadata={"width": 16, "height": 24},
+            created_at=cover.created_at,
         )
         db.add(record)
         db.commit()

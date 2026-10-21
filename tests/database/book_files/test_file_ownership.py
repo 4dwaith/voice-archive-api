@@ -31,7 +31,7 @@ def add_file(db, *, key="file", kind=FileKind.COVER, book_id=None):
         book_id=book_id,
         storage_key=key,
         byte_size=1,
-        file_metadata={},
+        file_metadata={"width": 16, "height": 24} if kind == FileKind.COVER else {"page_count": 3},
         created_at=datetime.now(UTC) - timedelta(days=30),
     )
     db.add(record)
@@ -53,7 +53,11 @@ def test_direct_writes_maintain_unlink_timestamps(test_engine):
         db.refresh(record)
         assert before <= record.unlinked_at <= datetime.now(UTC)
         detached_at = record.unlinked_at
-        db.execute(update(StoredFile).where(StoredFile.id == record.id).values(file_metadata={"note": "changed"}))
+        db.execute(
+            update(StoredFile)
+            .where(StoredFile.id == record.id)
+            .values(file_metadata={"width": 16, "height": 24, "note": "changed"})
+        )
         db.refresh(record)
         assert record.unlinked_at == detached_at
 

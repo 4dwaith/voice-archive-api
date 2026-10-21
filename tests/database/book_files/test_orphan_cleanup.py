@@ -34,7 +34,7 @@ def save_new_file(storage, days=8):
 
 
 def add_reference(factory, key, model):
-    values = {"file_metadata": {}}
+    values = {"file_metadata": {"width": 16, "height": 24} if model == FileKind.COVER else {"page_count": 3}}
     with factory.begin() as db:
         db.add(StoredFile(kind=model, storage_key=key, byte_size=12, created_at=NOW, **values))
 
