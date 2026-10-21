@@ -161,11 +161,18 @@ directory:
   `.env`. Run this before the app on a new database or after migration changes.
 - **Tests** (pytest): runs the complete `tests` directory, loading `.env.test`.
   The native test tree supports navigating and rerunning individual failures.
-- **Tests (parallel)** (pytest): runs the same suite using four worker processes
-  (`-n 4 --dist worksteal`) and a separate `.pytest-tmp-parallel` directory.
+- **Tests (parallel)** (pytest): runs the same suite using eight worker processes
+  (`-n 8 --dist worksteal`) and a separate `.pytest-tmp-parallel` directory.
   Use this for full-suite runs and **Tests** for stepping through a test in Debug.
   Each worker uses the same test PostgreSQL service, with unique per-test databases.
   More workers can increase database contention; benchmark before raising the count.
+
+Local measurements on a Ryzen 7 7700X (8 cores / 16 threads, 64 GB RAM) put
+full-suite wall time at about 36 s with 2 workers, 21 s with 4, and 15–16 s
+with 8, 12, or 16. All 546 tests passed at each count. Eight is the default
+because additional workers provided little improvement. These measurements include
+Python/pytest startup and depend on current machine load; remeasure after major
+suite or hardware changes. Keep a fixed worker count for predictable resource use.
 
 Keep PostgreSQL running with `docker compose --profile test up -d --wait db db-test`.
 Stop the Compose `api` service before running **Application** to free port 8000.
