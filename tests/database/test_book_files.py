@@ -3,11 +3,12 @@ from io import BytesIO
 from pathlib import Path
 from unittest.mock import Mock
 
+import psycopg
 import pytest
 from PIL import Image
 from pypdf import PdfWriter
 from sqlalchemy import CheckConstraint, MetaData, Table, event, func, inspect, select
-from sqlalchemy.exc import IntegrityError
+from sqlalchemy.exc import IntegrityError, OperationalError
 from sqlalchemy.orm import Session
 
 from alembic import command
@@ -16,7 +17,7 @@ from voice_archive_api.book_files.covers import InvalidImage
 from voice_archive_api.book_files.model import CoverFile, PendingFileDeletion, SourcePdfFile
 from voice_archive_api.book_files.pdfs import InvalidPdf
 from voice_archive_api.books.model import Book
-from voice_archive_api.file_handling import LocalStorage, Storage
+from voice_archive_api.file_handling import LocalStorage
 
 
 FIRST_BOOK_FILES_REVISION = "0004_book_files"
@@ -65,32 +66,13 @@ def remaining_files(storage):
 ], ids=["runtime-error", "integrity-error", "interrupted"])
 def test_file_write_cleans_up_and_preserves_errors(error):
     db = Mock(spec=Session)
-    storage = Mock(spec=Storage)
-    storage_key = "promoted/test-file"
 
     with pytest.raises(type(error)) as raised:
-        with service.file_write(db, storage, storage_key):
+        with service.file_write(db):
             raise error
 
     assert raised.value is error
     db.rollback.assert_called_once_with()
-    storage.delete.assert_called_once_with(storage_key)
-
-
-def test_file_write_deletes_file_even_if_rollback_fails():
-    db = Mock(spec=Session)
-    storage = Mock(spec=Storage)
-    storage_key = "promoted/test-file"
-    rollback_error = RuntimeError("rollback failed")
-    db.rollback.side_effect = rollback_error
-
-    with pytest.raises(RuntimeError, match="rollback failed") as raised:
-        with service.file_write(db, storage, storage_key):
-            raise ValueError("write failed")
-
-    assert raised.value is rollback_error
-    db.rollback.assert_called_once_with()
-    storage.delete.assert_called_once_with(storage_key)
 
 
 @pytest.mark.parametrize("model", [CoverFile, SourcePdfFile])
@@ -165,17 +147,30 @@ def test_invalid_input_cleanup(test_engine, storage, kind, error):
 
 
 @pytest.mark.parametrize("kind", ["cover", "source_pdf"])
-def test_database_failure_removes_file(test_engine, storage, kind):
-    with Session(test_engine) as db:
-        @event.listens_for(db, "after_flush_postexec", once=True)
-        def interrupt_commit(*_):
-            # INSERT has executed, but its transaction has not been committed.
-            raise RuntimeError("commit interrupted")
+def test_database_failure_preserves_file(test_engine, storage, kind, monkeypatch):
+    commit = test_engine.dialect.do_commit
+    connection_error = psycopg.OperationalError("connection lost after commit")
 
-        with pytest.raises(RuntimeError, match="commit interrupted"):
+    def commit_then_disconnect(connection):
+        # Persist the transaction, but report a lost connection to SQLAlchemy
+        # before it can regard the commit as successful.
+        commit(connection)
+        connection.driver_connection.close()
+        raise connection_error
+
+    with monkeypatch.context() as patch, Session(test_engine) as db:
+        patch.setattr(test_engine.dialect, "do_commit", commit_then_disconnect)
+        with pytest.raises(OperationalError, match="connection lost after commit") as raised:
             create_file(db, storage, kind)
-        assert db.scalar(select(func.count()).select_from(model_for(kind))) == 0
-    assert remaining_files(storage) == []
+        assert raised.value.orig is connection_error
+        assert raised.value.connection_invalidated
+
+    # A different connection must see the committed row despite the failed call.
+    with Session(test_engine) as db:
+        record = db.scalars(select(model_for(kind))).one()
+        assert remaining_files(storage) == [storage.root / record.storage_key]
+        with storage.open(record.storage_key) as stored:
+            assert len(stored.read()) == record.byte_size
 
 
 def file_record(model, **changes):

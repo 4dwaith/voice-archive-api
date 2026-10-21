@@ -74,15 +74,12 @@ def _delete_file(db: Session, model, file_id: int, book_link, not_found, already
 
 
 @contextmanager
-def file_write(db: Session, storage: Storage, storage_key: str) -> Iterator[None]:
+def file_write(db: Session) -> Iterator[None]:
     """Share rollback and cleanup without combining the two file models."""
     try:
         yield
     except BaseException:
-        try:
-            db.rollback()
-        finally:
-            storage.delete(storage_key)
+        db.rollback()
         raise
 
 
@@ -95,7 +92,7 @@ def create_cover_file(
 ) -> CoverFile:
     """Prepare and persist a cover independently of any book create/save."""
     prepared = prepare_cover(source, storage, max_bytes=max_bytes)
-    with file_write(db, storage, prepared.storage_key):
+    with file_write(db):
         record = CoverFile(
             storage_key=prepared.storage_key,
             byte_size=prepared.byte_size,
@@ -117,7 +114,7 @@ def create_pdf_file(
 ) -> SourcePdfFile:
     """Prepare and persist a source PDF independently of any book create/save."""
     prepared = prepare_pdf(source, storage, max_bytes=max_bytes)
-    with file_write(db, storage, prepared.storage_key):
+    with file_write(db):
         record = SourcePdfFile(
             storage_key=prepared.storage_key,
             byte_size=prepared.byte_size,
