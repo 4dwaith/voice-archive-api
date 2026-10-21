@@ -9,7 +9,6 @@ from voice_archive_api.books.constants import (
     DESCRIPTION_LIMIT,
     TITLE_LIMIT,
 )
-
 from voice_archive_api.books.validation import (
     validate_author,
     validate_language,

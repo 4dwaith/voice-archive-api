@@ -2,9 +2,14 @@ from collections.abc import Generator
 from datetime import datetime
 from typing import BinaryIO, Protocol
 
+from voice_archive_api.core.errors import ApplicationError
 
-class FileTooLarge(Exception):
+
+class FileTooLarge(ApplicationError):
     """The incoming stream exceeded the supplied byte limit."""
+
+    code = "file_too_large"
+    message = "Upload exceeds the configured size limit"
 
 
 class InvalidStorageKey(ValueError):

@@ -4,15 +4,22 @@ from pypdf import PdfReader
 from pypdf.errors import DependencyError, PyPdfError
 
 from voice_archive_api.book_files.model import PreparedFile
+from voice_archive_api.core.errors import ApplicationError
 from voice_archive_api.file_handling import BinarySource, Storage
 
 
-class InvalidPdf(Exception):
+class InvalidPdf(ApplicationError):
     """The input is not a structurally readable PDF with at least one page."""
 
+    code = "invalid_pdf"
+    message = "Source file must be a readable PDF with at least one page"
 
-class EncryptedPdfNotSupported(Exception):
+
+class EncryptedPdfNotSupported(ApplicationError):
     """Encrypted PDFs require a password workflow that is not supported yet."""
+
+    code = "encrypted_pdf_not_supported"
+    message = "Encrypted PDFs are not supported"
 
 
 def _inspect_pdf(source: BinaryIO) -> tuple[int, int]:

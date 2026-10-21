@@ -45,6 +45,6 @@ def pdf_bytes_of_size(byte_size: int) -> bytes:
     while len(padding) < padding_size:
         padding.extend(f"% padding {len(padding)}\n".encode())
     # End even a truncated comment with a newline before startxref.
-    padding = padding[:padding_size - 1] + b"\n"
+    padding = padding[: padding_size - 1] + b"\n"
     marker = payload.rindex(b"startxref")
     return payload[:marker] + padding + payload[marker:]

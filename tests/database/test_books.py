@@ -12,8 +12,8 @@ from voice_archive_api.books import service
 from voice_archive_api.books.model import Book
 from voice_archive_api.books.schemas import BookCreate
 
-
 FIRST_BOOK_REVISION = "0002_book_metadata"
+
 
 def payload(title="Book", **kwargs):
     return BookCreate(title=title, language="en", **kwargs)
@@ -25,9 +25,8 @@ def test_book_write_preserves_unrelated_errors(error):
     # Book write should only intercept duplicate as a custom exception, not touching other errors
 
     db = Mock(spec=Session)
-    with pytest.raises(type(error)) as raised:
-        with service.book_write(db):
-            raise error
+    with pytest.raises(type(error)) as raised, service.book_write(db):
+        raise error
     assert raised.value is error
 
 
@@ -51,9 +50,7 @@ def test_maximum_unicode_identity_fits_postgres_index(test_engine):
     [UTC, timezone(timedelta(hours=5, minutes=30))],
     ids=["utc", "utc-plus-0530"],
 )
-def test_book_timestamp_columns_preserve_instants_and_reload_in_utc(
-    test_engine, source_timezone
-):
+def test_book_timestamp_columns_preserve_instants_and_reload_in_utc(test_engine, source_timezone):
     created_at = datetime(2026, 1, 15, 3, 15, 30, 123456, tzinfo=source_timezone)
     updated_at = created_at + timedelta(hours=2)
     # Bypass service-generated UTC timestamps to exercise the column mappings
@@ -90,14 +87,10 @@ def test_service_delete_is_repeatable_and_deleted_ids_are_not_reused(test_engine
         assert service.delete_book(db, book_id) is True
         assert service.delete_book(db, book_id) is False
         replacement = service.create_book(db, payload())
-        assert (
-            replacement.id > book_id
-        )  # PostgreSQL identity sequences do not recycle IDs.
+        assert replacement.id > book_id  # PostgreSQL identity sequences do not recycle IDs.
 
 
-def test_unique_constraint_handles_a_writer_winning_after_precheck(
-    test_engine, monkeypatch
-):
+def test_unique_constraint_handles_a_writer_winning_after_precheck(test_engine, monkeypatch):
     original_check = service.check_duplicate
     intervened = False
 
@@ -118,12 +111,7 @@ def test_unique_constraint_handles_a_writer_winning_after_precheck(
 
 
 def test_database_duplicate_is_translated_to_http_conflict(client, monkeypatch):
-    assert (
-        client.post(
-            "/api/v1/books", json={"title": "Book", "language": "en"}
-        ).status_code
-        == 201
-    )
+    assert client.post("/api/v1/books", json={"title": "Book", "language": "en"}).status_code == 201
     # Force the write to reach the constraint, as when a precheck saw stale data.
     monkeypatch.setattr(service, "check_duplicate", lambda *args, **kwargs: None)
     response = client.post("/api/v1/books", json={"title": " BOOK ", "language": "en"})
@@ -135,19 +123,22 @@ def test_book_write_rolls_back_failed_commit_and_recovers_session(test_engine):
     now = datetime.now(UTC)
     with Session(test_engine) as db:
         book = Book(
-            title="Original", normalized_title="original", normalized_author="",
-            language="en", created_at=now, updated_at=now,
+            title="Original",
+            normalized_title="original",
+            normalized_author="",
+            language="en",
+            created_at=now,
+            updated_at=now,
         )
         db.add(book)
         db.commit()
         book_id = book.id
 
-        with pytest.raises(IntegrityError):
-            with service.book_write(db):
-                book.description = "Discard me"
-                db.flush()  # Make a real change before the later failure.
-                book.title = ""  # Violate the database's nonempty-title constraint.
-                db.commit()
+        with pytest.raises(IntegrityError), service.book_write(db):
+            book.description = "Discard me"
+            db.flush()  # Make a real change before the later failure.
+            book.title = ""  # Violate the database's nonempty-title constraint.
+            db.commit()
 
         # Check before closing the session: closing it could mask a missing
         # rollback in book_write. A failed transaction must be usable again.
@@ -183,8 +174,17 @@ def test_book_write_rolls_back_failed_commit_and_recovers_session(test_engine):
 )
 def test_database_enforces_constraints(test_engine, field, value):
     now = datetime.now(UTC)
-    values = {"title": "Valid", "normalized_title": "valid", "author": None, "normalized_author": "",
-              "description": None, "language": "en", "created_at": now, "updated_at": now, field: value}
+    values = {
+        "title": "Valid",
+        "normalized_title": "valid",
+        "author": None,
+        "normalized_author": "",
+        "description": None,
+        "language": "en",
+        "created_at": now,
+        "updated_at": now,
+        field: value,
+    }
     with Session(test_engine) as db:
         db.add(Book(**values))
         with pytest.raises((IntegrityError, DataError)):
@@ -199,8 +199,12 @@ def test_books_can_be_added_after_full_downgrade_and_upgrade(test_engine, migrat
     now = datetime.now(UTC)
     with Session(test_engine) as db:
         book = Book(
-            title="Rebuilt library", normalized_title="rebuilt library",
-            normalized_author="", language="en", created_at=now, updated_at=now,
+            title="Rebuilt library",
+            normalized_title="rebuilt library",
+            normalized_author="",
+            language="en",
+            created_at=now,
+            updated_at=now,
         )
         db.add(book)
         db.flush()
@@ -212,6 +216,7 @@ def test_books_can_be_added_after_full_downgrade_and_upgrade(test_engine, migrat
         assert book.id > 0
         assert book.title == "Rebuilt library"
 
+
 def test_upgrade_from_first_book_revision_preserves_existing_books(test_engine, migration_config):
     # Checks that ever since the books table was introduced, all migrations preserve existing books.
     command.downgrade(migration_config, FIRST_BOOK_REVISION)
@@ -221,9 +226,14 @@ def test_upgrade_from_first_book_revision_preserves_existing_books(test_engine, 
     historical_books = Table("books", MetaData(), autoload_with=test_engine)
     now = datetime.now(UTC)
     values = {
-        "title": "Book", "normalized_title": "book", "author": "Author",
-        "normalized_author": "author", "description": "x" * 15000,
-        "language": "kn", "created_at": now, "updated_at": now,
+        "title": "Book",
+        "normalized_title": "book",
+        "author": "Author",
+        "normalized_author": "author",
+        "description": "x" * 15000,
+        "language": "kn",
+        "created_at": now,
+        "updated_at": now,
     }
 
     # Insert using the historical schema, independently of future ORM changes.

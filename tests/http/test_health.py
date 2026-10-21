@@ -10,6 +10,7 @@ from voice_archive_api.core.config import Settings
 from voice_archive_api.db.session import get_db
 from voice_archive_api.main import create_app
 
+
 def test_health_returns_versioned_response(client: TestClient) -> None:
     response = client.get("/api/v1/health")
 
@@ -30,9 +31,7 @@ def test_openapi_contract_is_stable(client: TestClient) -> None:
     assert schema["info"] == {"title": "Voice Archive API", "version": "0.1.0"}
     operation = schema["paths"]["/api/v1/health"]["get"]
     assert operation["operationId"] == "get_api_v1_health"
-    response_schema = operation["responses"]["200"]["content"]["application/json"][
-        "schema"
-    ]
+    response_schema = operation["responses"]["200"]["content"]["application/json"]["schema"]
     assert response_schema == {"$ref": "#/components/schemas/HealthResponse"}
 
 
@@ -58,9 +57,7 @@ def test_development_cors_origins_are_allowed(client: TestClient, origin: str) -
     assert response.headers["access-control-allow-origin"] == origin
 
 
-def test_ready_uses_isolated_postgres_database(
-    client: TestClient, test_engine
-) -> None:
+def test_ready_uses_isolated_postgres_database(client: TestClient, test_engine) -> None:
     response = client.get("/api/v1/ready")
     assert response.status_code == 200
     assert response.json() == {"status": "ok", "api_version": "v1"}
@@ -83,9 +80,7 @@ def test_health_does_not_resolve_database_dependency() -> None:
 def test_ready_returns_503_on_database_failure_and_recovers() -> None:
     app = create_app(Settings(_env_file=None))
     session = Mock(spec=Session)
-    session.execute.side_effect = OperationalError(
-        "SELECT 1", {}, Exception("private connection details")
-    )
+    session.execute.side_effect = OperationalError("SELECT 1", {}, Exception("private connection details"))
     app.dependency_overrides[get_db] = lambda: session
     with TestClient(app) as client:
         response = client.get("/api/v1/ready")

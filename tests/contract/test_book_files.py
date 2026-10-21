@@ -3,15 +3,31 @@ import pytest
 from .helpers import assert_binary_response_contract, assert_multipart_file_body_contract, assert_operation_contract
 
 
-@pytest.mark.parametrize("path,method,operation_id,responses", [
-    ("/api/v1/files/{kind}", "post", "create_api_v1_file", {
-        "201": "FileResponse", "400": "FileUploadErrorResponse", "413": "FileUploadErrorResponse",
-        "415": "FileErrorResponse", "422": ["FileErrorResponse", "ValidationErrorResponse"],
-    }),
-    ("/api/v1/files/{file_id}", "get", "get_api_v1_file", {"404": "FileErrorResponse", "416": None}),
-    ("/api/v1/files/{file_id}", "head", "head_api_v1_file", {"200": None, "206": None, "404": "FileErrorResponse"}),
-    ("/api/v1/files/{file_id}", "delete", "delete_api_v1_file", {"204": None, "404": "FileErrorResponse", "409": "FileErrorResponse"}),
-])
+@pytest.mark.parametrize(
+    "path,method,operation_id,responses",
+    [
+        (
+            "/api/v1/files/{kind}",
+            "post",
+            "create_api_v1_file",
+            {
+                "201": "FileResponse",
+                "400": "FileUploadErrorResponse",
+                "413": "FileUploadErrorResponse",
+                "415": "FileErrorResponse",
+                "422": ["FileErrorResponse", "ValidationErrorResponse"],
+            },
+        ),
+        ("/api/v1/files/{file_id}", "get", "get_api_v1_file", {"404": "FileErrorResponse", "416": None}),
+        ("/api/v1/files/{file_id}", "head", "head_api_v1_file", {"200": None, "206": None, "404": "FileErrorResponse"}),
+        (
+            "/api/v1/files/{file_id}",
+            "delete",
+            "delete_api_v1_file",
+            {"204": None, "404": "FileErrorResponse", "409": "FileErrorResponse"},
+        ),
+    ],
+)
 def test_file_operation_contracts(openapi_document, path, method, operation_id, responses):
     assert_operation_contract(openapi_document, path, method, operation_id, responses)
 
@@ -28,12 +44,18 @@ def test_upload_response_contract_exposes_only_public_file_details(openapi_docum
 
 
 @pytest.mark.parametrize("path", ["/api/v1/files/cover", "/api/v1/files/source_pdf"])
-@pytest.mark.parametrize("case", ["missing", "wrong-name", "multiple", "text-field", "missing-boundary", "malformed", "not-multipart"])
+@pytest.mark.parametrize(
+    "case", ["missing", "wrong-name", "multiple", "text-field", "missing-boundary", "malformed", "not-multipart"]
+)
 def test_invalid_upload_request_has_a_documented_error(client, file_storage, path, case):
     if case == "missing":
-        response = client.post(path, content=b"--empty--\r\n", headers={
-            "Content-Type": "multipart/form-data; boundary=empty",
-        })
+        response = client.post(
+            path,
+            content=b"--empty--\r\n",
+            headers={
+                "Content-Type": "multipart/form-data; boundary=empty",
+            },
+        )
     elif case == "wrong-name":
         response = client.post(path, files={"other": ("file.bin", b"data")})
     elif case == "multiple":
@@ -43,9 +65,13 @@ def test_invalid_upload_request_has_a_documented_error(client, file_storage, pat
     elif case == "missing-boundary":
         response = client.post(path, content=b"data", headers={"Content-Type": "multipart/form-data"})
     elif case == "malformed":
-        response = client.post(path, content=b"not the boundary", headers={
-            "Content-Type": "multipart/form-data; boundary=expected",
-        })
+        response = client.post(
+            path,
+            content=b"not the boundary",
+            headers={
+                "Content-Type": "multipart/form-data; boundary=expected",
+            },
+        )
     else:
         response = client.post(path, content=b"data", headers={"Content-Type": "application/pdf"})
 
@@ -60,15 +86,23 @@ def test_invalid_upload_request_has_a_documented_error(client, file_storage, pat
     assert not any(path.is_file() for path in file_storage.root.rglob("*"))
 
 
-@pytest.mark.parametrize("path,media_type", [
-    ("/api/v1/files/{file_id}", "image/webp"),
-    ("/api/v1/files/{file_id}", "application/pdf"),
-])
+@pytest.mark.parametrize(
+    "path,media_type",
+    [
+        ("/api/v1/files/{file_id}", "image/webp"),
+        ("/api/v1/files/{file_id}", "application/pdf"),
+    ],
+)
 @pytest.mark.parametrize("status", ["200", "206"])
 def test_file_delivery_binary_contracts(openapi_document, path, media_type, status):
     assert_binary_response_contract(
-        openapi_document, path, "get", status, media_type,
-        additional_media_types=tuple({"image/webp", "application/pdf"} - {media_type}) + (("multipart/byteranges",) if status == "206" else ()),
+        openapi_document,
+        path,
+        "get",
+        status,
+        media_type,
+        additional_media_types=tuple({"image/webp", "application/pdf"} - {media_type})
+        + (("multipart/byteranges",) if status == "206" else ()),
     )
     assert "requestBody" not in openapi_document["paths"][path]["get"]
 

@@ -1,8 +1,8 @@
 from typing import Any
 
+from asgi_correlation_id import CorrelationIdMiddleware
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from asgi_correlation_id import CorrelationIdMiddleware
 from sqlalchemy import Engine
 from sqlalchemy.orm import Session, sessionmaker
 from starlette.datastructures import State

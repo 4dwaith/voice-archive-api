@@ -4,6 +4,7 @@ Revision ID: 0001_backend_foundation
 Revises:
 Create Date: 2026-09-07
 """
+
 from collections.abc import Sequence
 
 revision: str = "0001_backend_foundation"
@@ -18,4 +19,3 @@ def upgrade() -> None:
 
 def downgrade() -> None:
     """The baseline has no schema objects to remove."""
-

@@ -6,10 +6,11 @@ from typing import Any
 def assert_binary_response_contract(document, path, method, status, media_type, *, additional_media_types=()):
     response = document["paths"][path][method]["responses"][status]
     assert response["content"] == {
-        name: {"schema": {"type": "string", "format": "binary"}}
-        for name in (media_type, *additional_media_types)
+        name: {"schema": {"type": "string", "format": "binary"}} for name in (media_type, *additional_media_types)
     }
-    assert {"Content-Length", "Content-Disposition", "Accept-Ranges", "ETag", "Last-Modified"} <= response["headers"].keys()
+    assert {"Content-Length", "Content-Disposition", "Accept-Ranges", "ETag", "Last-Modified"} <= response[
+        "headers"
+    ].keys()
     if status == "206":
         assert "Content-Range" in response["headers"]
 
@@ -36,9 +37,9 @@ def assert_operation_contract(
                 {"$ref": f"#/components/schemas/{name}"} for name in model
             ], context
         else:
-            assert response["content"]["application/json"]["schema"] == {
-                "$ref": f"#/components/schemas/{model}"
-            }, context
+            assert response["content"]["application/json"]["schema"] == {"$ref": f"#/components/schemas/{model}"}, (
+                context
+            )
 
 
 def assert_request_body_contract(
@@ -55,9 +56,7 @@ def assert_request_body_contract(
     body = document["paths"][path][method]["requestBody"]
     context = f"{method.upper()} {path}: request body"
     assert body.get("required", False) is required, context
-    assert body["content"]["application/json"]["schema"] == {
-        "$ref": f"#/components/schemas/{request_model}"
-    }, context
+    assert body["content"]["application/json"]["schema"] == {"$ref": f"#/components/schemas/{request_model}"}, context
 
 
 def assert_multipart_file_body_contract(

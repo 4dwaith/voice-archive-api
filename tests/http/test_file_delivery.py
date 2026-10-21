@@ -6,11 +6,11 @@ from unittest.mock import Mock
 import pytest
 from fastapi.responses import FileResponse
 
-from voice_archive_api.core.dependencies import get_file_delivery
-from voice_archive_api.file_handling.local_file_delivery import LocalFileDelivery
 from voice_archive_api.book_files import service
+from voice_archive_api.core.dependencies import get_file_delivery
 from voice_archive_api.db.session import get_db
 from voice_archive_api.file_handling import LocalStorage
+from voice_archive_api.file_handling.local_file_delivery import LocalFileDelivery
 
 
 @pytest.mark.parametrize("method", ["GET", "HEAD"])

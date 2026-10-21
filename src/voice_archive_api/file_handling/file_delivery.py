@@ -32,7 +32,7 @@ delivery_parameters = {
 }
 
 
-def delivery_responses(media_type: str, *, head: bool = False) -> dict:
+def delivery_responses(media_type: str, *, head: bool = False) -> dict[int | str, dict[str, Any]]:
     """Document native FileResponse bodies and headers for GET and HEAD."""
     binary = {"schema": {"type": "string", "format": "binary"}}
     headers = {

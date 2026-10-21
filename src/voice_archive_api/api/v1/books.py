@@ -1,12 +1,12 @@
 from typing import Annotated, Any, Literal
 
-from fastapi import APIRouter, Depends, FastAPI, Path, Query, Request, Response
-from fastapi.responses import JSONResponse
+from fastapi import APIRouter, Depends, Path, Query, Response
 from sqlalchemy.orm import Session
 
 from voice_archive_api.api.errors import ErrorResponse, ValidationErrorResponse
 from voice_archive_api.api.v1.files import FileErrorResponse
 from voice_archive_api.books import service
+from voice_archive_api.books.model import Book
 from voice_archive_api.books.schemas import (
     BookCreate,
     BookList,
@@ -24,27 +24,6 @@ type BookErrorCode = Literal[
 
 class BookErrorResponse(ErrorResponse[BookErrorCode]):
     """HTTP error envelope for book operations."""
-
-
-def install_book_error_handlers(app: FastAPI) -> None:
-    @app.exception_handler(service.BookNotFound)
-    async def missing_book(request: Request, exc: service.BookNotFound):
-        return JSONResponse(
-            status_code=404,
-            content={"error": {"code": "book_not_found", "message": "Book not found"}},
-        )
-
-    @app.exception_handler(service.DuplicateBook)
-    async def duplicate_book(request: Request, exc: service.DuplicateBook):
-        return JSONResponse(
-            status_code=409,
-            content={
-                "error": {
-                    "code": "duplicate_book",
-                    "message": "A book with this title and author already exists",
-                }
-            },
-        )
 
 
 router = APIRouter(
@@ -89,7 +68,7 @@ conflict: dict[int | str, dict[str, Any]] = {
     operation_id="create_api_v1_book",
     responses=missing_file | conflict | invalid_file_link,
 )
-def create_book(payload: BookCreate, db: Database):
+def create_book(payload: BookCreate, db: Database) -> Book:
     """Create a book. Title and language are required; prepared cover/PDF IDs are optional."""
     return service.create_book(db, payload)
 
@@ -99,7 +78,7 @@ def list_books(
     db: Database,
     limit: Annotated[int, Query(ge=1, le=100)] = 50,
     offset: Annotated[int, Query(ge=0, le=9_223_372_036_854_775_807)] = 0,
-):
+) -> BookList:
     """List books in ascending ID order, with a bounded page and total count."""
     items, total = service.list_books(db, limit=limit, offset=offset)
     return BookList(items=items, total=total, limit=limit, offset=offset)
@@ -111,7 +90,7 @@ def list_books(
     operation_id="get_api_v1_book",
     responses=missing_book,
 )
-def get_book(book_id: BookId, db: Database):
+def get_book(book_id: BookId, db: Database) -> Book:
     return service.get_book(db, book_id)
 
 
@@ -121,7 +100,7 @@ def get_book(book_id: BookId, db: Database):
     operation_id="patch_api_v1_book",
     responses=missing_book_or_file | conflict | invalid_file_link,
 )
-def patch_book(book_id: BookId, payload: BookPatch, db: Database):
+def patch_book(book_id: BookId, payload: BookPatch, db: Database) -> Book:
     """Update supplied fields. Omission preserves values; only nullable fields accept null.
 
     Optional cover/PDF IDs link prepared files; null clears the corresponding link.
@@ -136,7 +115,7 @@ def patch_book(book_id: BookId, payload: BookPatch, db: Database):
     responses=missing_book,
     response_class=Response,
 )
-def delete_book(book_id: BookId, db: Database):
+def delete_book(book_id: BookId, db: Database) -> Response:
     if not service.delete_book(db, book_id):
         raise service.BookNotFound
     return Response(status_code=204)

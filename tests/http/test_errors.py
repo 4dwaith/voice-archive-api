@@ -10,10 +10,34 @@ from asgi_correlation_id import correlation_id
 from fastapi.testclient import TestClient
 
 from voice_archive_api.api.errors import HttpErrorResponse, InternalErrorResponse, ValidationErrorResponse
+from voice_archive_api.api.v1.file_uploads import InvalidMultipart
+from voice_archive_api.book_files.covers import InvalidImage, UnsupportedMediaType
+from voice_archive_api.book_files.pdfs import EncryptedPdfNotSupported, InvalidPdf
+from voice_archive_api.book_files.service import FileAlreadyLinked, FileKindMismatch, FileNotFound
+from voice_archive_api.books.service import BookNotFound, DuplicateBook
 from voice_archive_api.core.config import Settings
+from voice_archive_api.file_handling import FileTooLarge
 from voice_archive_api.main import create_app
 
 logger = logging.getLogger("voice_archive_api.test_probe")
+
+EXPECTED_FAILURES = [
+    (BookNotFound, 404, "book_not_found"),
+    (DuplicateBook, 409, "duplicate_book"),
+    (FileNotFound, 404, "file_not_found"),
+    (FileAlreadyLinked, 409, "file_already_linked"),
+    (FileKindMismatch, 422, "file_kind_mismatch"),
+    (InvalidImage, 422, "invalid_image"),
+    (UnsupportedMediaType, 415, "unsupported_media_type"),
+    (InvalidPdf, 422, "invalid_pdf"),
+    (EncryptedPdfNotSupported, 422, "encrypted_pdf_not_supported"),
+    (FileTooLarge, 413, "file_too_large"),
+    (InvalidMultipart, 400, "invalid_multipart"),
+]
+
+
+class MissingImportedFile(FileNotFound):
+    """A specialized error should inherit its parent's public representation."""
 
 
 @pytest.fixture
@@ -33,6 +57,15 @@ def boundary_client(tmp_path):
     def fail():
         raise OSError("PRIVATE_EXCEPTION_TEXT")
 
+    @app.get("/test-application-failure/{case}")
+    def fail_application(case: int):
+        error, _, _ = EXPECTED_FAILURES[case]
+        raise error("PRIVATE_EXCEPTION_TEXT")
+
+    @app.get("/test-inherited-failure")
+    def fail_inherited():
+        raise MissingImportedFile("PRIVATE_EXCEPTION_TEXT")
+
     @app.get("/test-log")
     async def log_request():
         logger.info("probe-start")
@@ -42,6 +75,22 @@ def boundary_client(tmp_path):
 
     with TestClient(app, raise_server_exceptions=False) as client:
         yield client
+
+
+@pytest.mark.parametrize("case,expected", list(enumerate(EXPECTED_FAILURES)))
+def test_application_errors_keep_public_status_codes_and_messages(boundary_client, case, expected):
+    error, status, code = expected
+    response = boundary_client.get(f"/test-application-failure/{case}")
+    assert response.status_code == status
+    assert response.json() == {"error": {"code": code, "message": error.message}}
+    assert "PRIVATE_EXCEPTION_TEXT" not in response.text
+
+
+def test_application_error_handler_accepts_specialized_subclasses(boundary_client):
+    response = boundary_client.get("/test-inherited-failure")
+    assert response.status_code == 404
+    assert response.json() == {"error": {"code": "file_not_found", "message": FileNotFound.message}}
+    assert "PRIVATE_EXCEPTION_TEXT" not in response.text
 
 
 @pytest.mark.parametrize(

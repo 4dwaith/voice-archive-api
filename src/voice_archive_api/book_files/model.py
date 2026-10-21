@@ -7,8 +7,8 @@ from sqlalchemy import BigInteger, CheckConstraint, DateTime, Enum, Identity, In
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column
 
-from voice_archive_api.file_handling import BinarySource, Storage
 from voice_archive_api.db.base import Base
+from voice_archive_api.file_handling import BinarySource, Storage
 
 
 class FileKind(StrEnum):

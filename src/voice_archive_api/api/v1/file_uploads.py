@@ -1,67 +1,45 @@
 """Request bounds and errors for file uploads."""
 
+from collections.abc import Callable, Coroutine
 from typing import Literal
 
-from fastapi import FastAPI, Request
-from fastapi.responses import JSONResponse
-from fastapi.routing import APIRoute
+from fastapi import Request, Response
 from fastapi.exceptions import RequestValidationError
-from voice_archive_api.book_files.model import FileKind
-from voice_archive_api.book_files.service import FILE_STRATEGIES
+from fastapi.routing import APIRoute
 from python_multipart.exceptions import MultipartParseError
 from starlette.exceptions import HTTPException
 from starlette.types import Message
 
 from voice_archive_api.api.errors import ErrorResponse
+from voice_archive_api.book_files.model import FileKind
+from voice_archive_api.book_files.service import FILE_STRATEGIES
 from voice_archive_api.core.dependencies import get_app_settings
+from voice_archive_api.core.errors import ApplicationError
 from voice_archive_api.file_handling import FileTooLarge
 
 MULTIPART_OVERHEAD_BYTES = 64 * 1024
 
 
-class InvalidMultipart(Exception):
+class InvalidMultipart(ApplicationError):
     """An upload must contain exactly one file part and no extra form fields."""
+
+    code = "invalid_multipart"
+    message = "Expected a multipart upload with one file field named 'file'"
 
 
 class FileUploadErrorResponse(ErrorResponse[Literal["file_too_large", "invalid_multipart"]]):
     """Errors shared by cover and PDF upload requests."""
 
 
-def install_upload_error_handlers(app: FastAPI) -> None:
-    @app.exception_handler(FileTooLarge)
-    async def too_large(request: Request, exc: FileTooLarge):
-        return JSONResponse(
-            status_code=413,
-            content={
-                "error": {
-                    "code": "file_too_large",
-                    "message": "Upload exceeds the configured size limit",
-                }
-            },
-        )
-
-    @app.exception_handler(InvalidMultipart)
-    async def invalid_multipart(request: Request, exc: InvalidMultipart):
-        return JSONResponse(
-            status_code=400,
-            content={
-                "error": {
-                    "code": "invalid_multipart",
-                    "message": "Expected a multipart upload with one file field named 'file'",
-                }
-            },
-        )
-
-
 class UploadRoute(APIRoute):
     """Bound multipart spooling before FastAPI validates the uploaded file field."""
 
-    def get_route_handler(self):
+    def get_route_handler(self) -> Callable[[Request], Coroutine[None, None, Response]]:
         handler = super().get_route_handler()
-        if "POST" not in self.methods:
+        if self.methods is None or "POST" not in self.methods:
             return handler
 
-        async def bounded_upload(request: Request):
+        async def bounded_upload(request: Request) -> Response:
             settings = get_app_settings(request)
             raw_kind = request.path_params["kind"]
             try:

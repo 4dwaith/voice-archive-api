@@ -3,14 +3,14 @@ from io import BytesIO
 from unittest.mock import Mock
 
 import pytest
-from alembic import command
 from sqlalchemy import event
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import sessionmaker
 
+from alembic import command
 from tests.file_processing.file_samples import cover_bytes, pdf_bytes
-from voice_archive_api.book_files.model import FileKind, StoredFile, FileCleanupProgress, PendingFileDeletion
 from voice_archive_api.book_files import cleanup, service
+from voice_archive_api.book_files.model import FileCleanupProgress, FileKind, PendingFileDeletion, StoredFile
 from voice_archive_api.books import service as book_service
 from voice_archive_api.books.model import Book
 from voice_archive_api.books.schemas import BookCreate, BookPatch
@@ -117,10 +117,17 @@ def test_concurrent_book_save_prevents_expiration(factory, storage, kind):
     with factory.begin() as saving:
         # An uncommitted FK reference holds KEY SHARE on the prepared file.
         # Cleanup must skip that row even though it cannot yet see this book.
-        saving.add(Book(
-            title="Being saved", normalized_title="being saved", normalized_author="",
-            language="en", created_at=NOW, updated_at=NOW, **{f"{kind}_file_id": record.id},
-        ))
+        saving.add(
+            Book(
+                title="Being saved",
+                normalized_title="being saved",
+                normalized_author="",
+                language="en",
+                created_at=NOW,
+                updated_at=NOW,
+                **{f"{kind}_file_id": record.id},
+            )
+        )
         # Flushing the book has locked the file record, so cleanup should not see it
         saving.flush()
         result = cleanup.run_promoted_cleanup(factory, storage, now=NOW)
@@ -180,7 +187,9 @@ def test_pending_deletions_survive_upgrade_from_their_first_revision(factory, mi
 
 @pytest.mark.parametrize("kind", ["cover", "source_pdf"])
 def test_scan_revisits_one_day_of_history_and_leaves_recent_files_for_later(
-    factory, storage, kind,
+    factory,
+    storage,
+    kind,
 ):
     boundary = prepared_file(factory, storage, kind, timedelta(days=7))
     cleanup.queue_expired_files(factory, NOW)
@@ -255,9 +264,14 @@ def test_failed_book_commit_preserves_links_file_records_and_bytes(factory, stor
     old = prepared_file(factory, storage, "cover")
     replacement = prepared_file(factory, storage, "cover")
     with factory() as db:
-        book_id = book_service.create_book(db, BookCreate(
-            title="Owner", language="en", cover_file_id=old.id,
-        )).id
+        book_id = book_service.create_book(
+            db,
+            BookCreate(
+                title="Owner",
+                language="en",
+                cover_file_id=old.id,
+            ),
+        ).id
 
     @event.listens_for(factory, "before_commit")
     def interrupt_commit(db):
@@ -268,9 +282,13 @@ def test_failed_book_commit_preserves_links_file_records_and_bytes(factory, stor
         if action == "delete":
             book_service.delete_book(db, book_id)
         else:
-            book_service.patch_book(db, book_id, BookPatch(
-                cover_file_id=replacement.id if action == "replace" else None,
-            ))
+            book_service.patch_book(
+                db,
+                book_id,
+                BookPatch(
+                    cover_file_id=replacement.id if action == "replace" else None,
+                ),
+            )
     with factory() as db:
         assert db.get(Book, book_id).cover_file_id == old.id
         assert db.get(StoredFile, old.id) is not None
@@ -280,7 +298,9 @@ def test_failed_book_commit_preserves_links_file_records_and_bytes(factory, stor
 
 
 def test_progress_migration_starts_with_null_boundaries_and_preserves_files(
-    factory, storage, migration_config,
+    factory,
+    storage,
+    migration_config,
 ):
     record = prepared_file(factory, storage, "cover")
     command.downgrade(migration_config, FIRST_PENDING_DELETES_REVISION)

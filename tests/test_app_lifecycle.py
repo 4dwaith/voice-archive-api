@@ -18,9 +18,14 @@ from voice_archive_api.main import create_app
 
 def settings_for(database: str, upload_root: Path) -> Settings:
     return Settings(
-        environment="test", postgres_user="unused", postgres_password="unused",
-        postgres_db=database, postgres_host="127.0.0.1", postgres_port=5432,
-        upload_root=upload_root, _env_file=None,
+        environment="test",
+        postgres_user="unused",
+        postgres_password="unused",
+        postgres_db=database,
+        postgres_host="127.0.0.1",
+        postgres_port=5432,
+        upload_root=upload_root,
+        _env_file=None,
     )
 
 
@@ -93,10 +98,9 @@ def test_apps_use_their_own_settings(tmp_path, monkeypatch):
 
 def test_engine_is_disposed_when_lifespan_body_raises(tmp_path, monkeypatch):
     app = create_app(settings_for("unused", tmp_path / "uploads"))
-    with pytest.raises(RuntimeError, match="interrupted"):
-        with TestClient(app):
-            engine = app.state.engine
-            dispose = Mock(wraps=engine.dispose)
-            monkeypatch.setattr(engine, "dispose", dispose)
-            raise RuntimeError("interrupted")
+    with pytest.raises(RuntimeError, match="interrupted"), TestClient(app):
+        engine = app.state.engine
+        dispose = Mock(wraps=engine.dispose)
+        monkeypatch.setattr(engine, "dispose", dispose)
+        raise RuntimeError("interrupted")
     dispose.assert_called_once_with()

@@ -1,6 +1,7 @@
 from collections.abc import Iterator
 from contextlib import contextmanager
 from datetime import UTC, datetime
+from typing import Any
 
 from psycopg.errors import ForeignKeyViolation, UniqueViolation
 from sqlalchemy import func, select
@@ -19,14 +20,17 @@ from voice_archive_api.books.constants import (
 from voice_archive_api.books.model import Book
 from voice_archive_api.books.schemas import BookCreate, BookPatch
 from voice_archive_api.books.validation import normalize_identity
+from voice_archive_api.core.errors import ApplicationError
 
 
-class BookNotFound(Exception):
-    pass
+class BookNotFound(ApplicationError):
+    code = "book_not_found"
+    message = "Book not found"
 
 
-class DuplicateBook(Exception):
-    pass
+class DuplicateBook(ApplicationError):
+    code = "duplicate_book"
+    message = "A book with this title and author already exists"
 
 
 def get_book(db: Session, book_id: int, *, for_update: bool = False) -> Book:
@@ -69,7 +73,7 @@ def book_write(db: Session) -> Iterator[None]:
         raise
 
 
-def check_file_links(db: Session, changes: dict) -> None:
+def check_file_links(db: Session, changes: dict[str, Any]) -> None:
     """Only persisted, successfully prepared files can be linked to a book."""
     for kind, field in file_service.BOOK_FILE_FIELDS.items():
         if (file_id := changes.get(field)) is not None:

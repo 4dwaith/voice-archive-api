@@ -11,7 +11,7 @@ from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from tests.file_processing.file_samples import cover_bytes, pdf_bytes, pdf_bytes_of_size
-from voice_archive_api.book_files.model import StoredFile, PendingFileDeletion
+from voice_archive_api.book_files.model import PendingFileDeletion, StoredFile
 
 scenarios("../features/book_files")
 
@@ -113,9 +113,12 @@ def stored_files(storage):
 
 @when("I upload the file")
 def upload_file(client, upload):
-    upload.response = client.post(upload.path, files={
-        "file": (upload.filename, upload.content, upload.media_type),
-    })
+    upload.response = client.post(
+        upload.path,
+        files={
+            "file": (upload.filename, upload.content, upload.media_type),
+        },
+    )
 
 
 def result(state: UploadScenario | DeliveryScenario) -> Response:
@@ -274,7 +277,9 @@ def complete_file(delivery):
 @then(parsers.parse("delivery headers identify the {kind}"))
 def representation_headers(delivery, kind):
     headers = result(delivery).headers
-    media_type, filename = {"cover": ("image/webp", "cover.webp"), "source PDF": ("application/pdf", "source.pdf")}[kind]
+    media_type, filename = {"cover": ("image/webp", "cover.webp"), "source PDF": ("application/pdf", "source.pdf")}[
+        kind
+    ]
     assert headers["content-type"] == media_type
     assert headers["content-disposition"] == f'inline; filename="{filename}"'
     assert headers["accept-ranges"] == "bytes"
@@ -298,7 +303,7 @@ def selected_bytes(delivery, start, end):
     size = len(delivery.content)
     assert 0 <= start <= end < size
     assert response.status_code == 206, response.text
-    assert response.content == delivery.content[start:end + 1]
+    assert response.content == delivery.content[start : end + 1]
     assert response.headers["content-range"] == f"bytes {start}-{end}/{size}"
     assert int(response.headers["content-length"]) == end - start + 1
     assert response.headers["content-type"] == "application/pdf"
@@ -339,10 +344,14 @@ def prepared_file_identity(delivery):
 @given("the prepared file is linked to a book")
 def link_prepared_file(client, delivery):
     _, file_id, field = prepared_file_identity(delivery)
-    response = client.post("/api/v1/books", json={
-        "title": "File owner", "language": "en",
-        field: file_id,
-    })
+    response = client.post(
+        "/api/v1/books",
+        json={
+            "title": "File owner",
+            "language": "en",
+            field: file_id,
+        },
+    )
     assert response.status_code == 201, response.text
 
 

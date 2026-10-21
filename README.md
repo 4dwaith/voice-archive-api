@@ -128,13 +128,15 @@ For one quality command using the same test environment:
 docker compose --profile test run --rm --build -v "./reports:/app/reports" tests python -m voice_archive_api.quality
 ```
 
-This checks application-source formatting, lints source/tests/migrations, checks
+This checks formatting and lint across all Python files, enforces strict
 application types, and runs the PostgreSQL suite. Combined statement/branch
 coverage must reach 90%; reports are written to `reports/htmlcov/index.html` and
 `reports/coverage.xml`. No CI setup or application database is required. Format
-on the host with `uv run ruff format src`; individual checks are `uv run ruff
-format --check src`, `uv run ruff check src tests alembic`, and `uv run mypy`.
-Historical tests and migrations are linted without requiring reformatting.
+on the host with `uv run ruff format .`; individual checks are `uv run ruff
+format --check .`, `uv run ruff check .`, and `uv run mypy`.
+Source, tests, and migrations all follow the same formatting and lint rules.
+Ruff enables `E4`, `E7`, `E9`, `F`, `I`, `B`, `UP`, and `SIM`; mypy checks
+application code with `strict = true`.
 
 ## Develop outside Docker
 
@@ -173,7 +175,7 @@ directory:
   More workers can increase database contention; benchmark before raising the count.
 
 Local measurements on a Ryzen 7 7700X (8 cores / 16 threads, 64 GB RAM) put
-full-suite wall time at about 36 s with 2 workers, 21 s with 4, and 15–16 s
+full-suite wall time at about 36 s with 2 workers, 21 s with 4, and 15â€“16 s
 with 8, 12, or 16. All 546 tests passed at each count. Eight is the default
 because additional workers provided little improvement. These measurements include
 Python/pytest startup and depend on current machine load; remeasure after major

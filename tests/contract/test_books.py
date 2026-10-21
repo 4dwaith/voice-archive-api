@@ -24,7 +24,8 @@ def test_openapi_preserves_unicode_length_constraints(openapi_document, model, f
             "post",
             "create_api_v1_book",
             {
-                "201": "BookResponse", "404": "FileErrorResponse",
+                "201": "BookResponse",
+                "404": "FileErrorResponse",
                 "409": "BookErrorResponse",
                 "422": ["ValidationErrorResponse", "FileErrorResponse"],
             },

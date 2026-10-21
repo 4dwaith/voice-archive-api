@@ -125,10 +125,12 @@ def omit_detail(state, field):
     state.request_draft.pop(field, None)
 
 
-@given(parsers.re(
-    r"I have left the (?P<field>title|author) "
-    r"(?P<entry>unentered|cleared|empty|spaces only|Unicode whitespace only|as tabs and line breaks)"
-))
+@given(
+    parsers.re(
+        r"I have left the (?P<field>title|author) "
+        r"(?P<entry>unentered|cleared|empty|spaces only|Unicode whitespace only|as tabs and line breaks)"
+    )
+)
 def blank_detail(state, field, entry):
     if entry == "unentered":
         omit_detail(state, field)
@@ -147,9 +149,7 @@ def whitespace_title(state):
     state.request_draft["title"] = "\u2003A\t\nBook "
 
 
-@given(parsers.parse(
-    'I have entered the {field} containing {count:d} copies of "{character}"'
-))
+@given(parsers.parse('I have entered the {field} containing {count:d} copies of "{character}"'))
 def enter_repeated_text(state, field, count, character):
     assert field in {"title", "author", "description"}
     state.request_draft[field] = character * count
@@ -165,10 +165,12 @@ def existing_authored_book(client, state, title, author):
     seed_book(client, state, title, author)
 
 
-@given(parsers.re(
-    r'my library contains "(?P<title>[^"]*)" by "(?P<author>[^"]*)" '
-    r'with description "(?P<description>[^"]*)"'
-))
+@given(
+    parsers.re(
+        r'my library contains "(?P<title>[^"]*)" by "(?P<author>[^"]*)" '
+        r'with description "(?P<description>[^"]*)"'
+    )
+)
 def existing_detailed_book(client, state, title, author, description):
     seed_book(client, state, title, author, description)
 
@@ -205,9 +207,7 @@ def submit(client, state, editing):
     state.submitted = state.request_draft.copy()
     if editing:
         assert state.original is not None, "No book is being edited"
-        state.response = client.patch(
-            f"/api/v1/books/{state.selected['id']}", json=state.submitted
-        )
+        state.response = client.patch(f"/api/v1/books/{state.selected['id']}", json=state.submitted)
     else:
         state.response = client.post("/api/v1/books", json=state.submitted)
         if state.response.status_code == 201:
@@ -242,9 +242,7 @@ def access_book(client, state, action):
         delete_book(client, state)
     else:
         assert action == "edit"
-        state.response = client.patch(
-            f"/api/v1/books/{state.selected['id']}", json={"title": "Changed"}
-        )
+        state.response = client.patch(f"/api/v1/books/{state.selected['id']}", json={"title": "Changed"})
 
 
 @when("I browse my library")
@@ -252,9 +250,7 @@ def browse(client, state):
     state.response = client.get("/api/v1/books")
 
 
-@when(parsers.parse(
-    "I browse my library with a page size of {size:d} after skipping {skip:d} books"
-))
+@when(parsers.parse("I browse my library with a page size of {size:d} after skipping {skip:d} books"))
 def browse_page(client, state, size, skip):
     state.response = client.get("/api/v1/books", params={"limit": size, "offset": skip})
 
@@ -310,9 +306,17 @@ def generated_values(state):
         assert datetime.fromisoformat(book[key]).utcoffset().total_seconds() == 0
     assert book["created_at"] == book["updated_at"]
     assert set(book) == {
-        "id", "title", "author", "description", "language", "created_at", "updated_at",
-        "cover_file_id", "source_pdf_file_id",
-        "cover_url", "source_pdf_url",
+        "id",
+        "title",
+        "author",
+        "description",
+        "language",
+        "created_at",
+        "updated_at",
+        "cover_file_id",
+        "source_pdf_file_id",
+        "cover_url",
+        "source_pdf_url",
     }
 
 
@@ -330,10 +334,7 @@ def invalid_detail(state, field, reason):
     body = response.json()
     assert body["error"]["code"] == "validation_error"
     # PATCH's omittable fields can report a union branch after the field name.
-    issues = [
-        issue for issue in body["issues"]
-        if issue["location"][:2] == ["body", field]
-    ]
+    issues = [issue for issue in body["issues"] if issue["location"][:2] == ["body", field]]
     assert issues, body
     if reason == "required":
         assert any(issue["code"] == "missing" for issue in issues)
@@ -354,9 +355,7 @@ def unchanged(client, state):
 def updated_time(state):
     book = result(state).json()
     assert book["created_at"] == state.original["created_at"]
-    assert datetime.fromisoformat(book["updated_at"]) > datetime.fromisoformat(
-        state.original["updated_at"]
-    )
+    assert datetime.fromisoformat(book["updated_at"]) > datetime.fromisoformat(state.original["updated_at"])
 
 
 @then("the book is removed from my library")
@@ -380,15 +379,10 @@ def invalid_page(state):
     assert response.status_code == 422, response.text
     body = response.json()
     assert body["error"]["code"] == "validation_error"
-    assert any(
-        issue["location"] in (["query", "limit"], ["query", "offset"])
-        for issue in body["issues"]
-    )
+    assert any(issue["location"] in (["query", "limit"], ["query", "offset"]) for issue in body["issues"])
 
 
-@then(parsers.parse(
-    "I see {count:d} books out of {total:d}, skipping {skip:d} with a page size of {size:d}"
-))
+@then(parsers.parse("I see {count:d} books out of {total:d}, skipping {skip:d} with a page size of {size:d}"))
 def page_contents(state, count, total, skip, size):
     response = result(state)
     assert response.status_code == 200, response.text
@@ -420,26 +414,32 @@ def select_prepared_file(state, kind, name):
     state.request_draft[file_id_field(kind)] = state.prepared_file_ids[name]
 
 
-@given(parsers.re(
-    r'my library contains "(?P<title>[^"]+)" linked to prepared cover "(?P<cover>[^"]+)" '
-    r'and source PDF "(?P<pdf>[^"]+)"'
-))
+@given(
+    parsers.re(
+        r'my library contains "(?P<title>[^"]+)" linked to prepared cover "(?P<cover>[^"]+)" '
+        r'and source PDF "(?P<pdf>[^"]+)"'
+    )
+)
 def book_with_files(client, state, title, cover, pdf):
-    response = client.post("/api/v1/books", json={
-        "title": title, "language": "en",
-        "cover_file_id": state.prepared_file_ids[cover],
-        "source_pdf_file_id": state.prepared_file_ids[pdf],
-    })
+    response = client.post(
+        "/api/v1/books",
+        json={
+            "title": title,
+            "language": "en",
+            "cover_file_id": state.prepared_file_ids[cover],
+            "source_pdf_file_id": state.prepared_file_ids[pdf],
+        },
+    )
     assert response.status_code == 201, response.text
     state.books[title] = response.json()
 
 
-@given(parsers.re(r'I have cleared the (?P<kind>cover|source PDF) link'))
+@given(parsers.re(r"I have cleared the (?P<kind>cover|source PDF) link"))
 def clear_file_link(state, kind):
     state.request_draft[file_id_field(kind)] = None
 
 
-@given(parsers.re(r'I have selected a missing (?P<kind>cover|source PDF)'))
+@given(parsers.re(r"I have selected a missing (?P<kind>cover|source PDF)"))
 def link_missing_file(state, kind):
     state.request_draft[file_id_field(kind)] = 9_223_372_036_854_775_807
 
@@ -462,7 +462,7 @@ def linked_to_file(client, state, kind, name):
     assert delivered.headers["content-type"] == {"cover": "image/webp", "source PDF": "application/pdf"}[kind]
 
 
-@then(parsers.re(r'the book has no (?P<kind>cover|source PDF) link'))
+@then(parsers.re(r"the book has no (?P<kind>cover|source PDF) link"))
 def file_link_absent(client, state, kind):
     assert result(state).json()[file_id_field(kind)] is None
     saved = fetch_saved_book(client, state)
@@ -472,7 +472,7 @@ def file_link_absent(client, state, kind):
     assert saved[url_field] is None
 
 
-@then(parsers.re(r'the original (?P<kind>cover|source PDF) can no longer be retrieved'))
+@then(parsers.re(r"the original (?P<kind>cover|source PDF) can no longer be retrieved"))
 def original_file_removed(client, state, kind):
     file_id = state.original[file_id_field(kind)]
     path = "files"
@@ -481,14 +481,14 @@ def original_file_removed(client, state, kind):
     assert response.json()["error"]["code"] == "file_not_found"
 
 
-@then(parsers.re(r'I am told that the (?P<kind>cover|source PDF) file cannot be found'))
+@then(parsers.re(r"I am told that the (?P<kind>cover|source PDF) file cannot be found"))
 def file_not_found(state, kind):
     response = result(state)
     assert response.status_code == 404, response.text
     assert response.json()["error"]["code"] == "file_not_found"
 
 
-@then(parsers.re(r'I am told that the (?P<kind>cover|source PDF) file is already linked'))
+@then(parsers.re(r"I am told that the (?P<kind>cover|source PDF) file is already linked"))
 def file_already_linked(state, kind):
     response = result(state)
     assert response.status_code == 409, response.text

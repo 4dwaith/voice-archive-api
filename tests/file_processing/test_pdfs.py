@@ -96,9 +96,11 @@ def test_encrypted_pdfs_are_rejected_even_with_an_empty_password(storage, passwo
 
 def test_missing_crypto_support_is_a_rejected_encrypted_pdf(storage):
     # Reader initialization can raise this before exposing is_encrypted.
-    with patch("voice_archive_api.book_files.pdfs.PdfReader", side_effect=DependencyError("crypto unavailable")):
-        with pytest.raises(EncryptedPdfNotSupported):
-            prepare_pdf(BytesIO(pdf_bytes()), storage, max_bytes=100_000)
+    with (
+        patch("voice_archive_api.book_files.pdfs.PdfReader", side_effect=DependencyError("crypto unavailable")),
+        pytest.raises(EncryptedPdfNotSupported),
+    ):
+        prepare_pdf(BytesIO(pdf_bytes()), storage, max_bytes=100_000)
     assert remaining_files(storage) == []
 
 
@@ -110,9 +112,11 @@ def test_limit_plus_one_cleans_partial_input(storage):
 
 
 def test_pdf_promotion_failure_removes_staged_input(storage):
-    with patch.object(storage, "promote", side_effect=OSError("promotion failed")):
-        with pytest.raises(OSError, match="promotion failed"):
-            prepare_pdf(BytesIO(pdf_bytes()), storage, max_bytes=100_000)
+    with (
+        patch.object(storage, "promote", side_effect=OSError("promotion failed")),
+        pytest.raises(OSError, match="promotion failed"),
+    ):
+        prepare_pdf(BytesIO(pdf_bytes()), storage, max_bytes=100_000)
     assert remaining_files(storage) == []
 
 
@@ -124,7 +128,7 @@ def test_streaming_input(storage):
 
         def read(self, size: int, /) -> bytes:
             assert 0 < size <= 1024 * 1024
-            chunk = payload[self.offset:self.offset + min(size, 17)]
+            chunk = payload[self.offset : self.offset + min(size, 17)]
             self.offset += len(chunk)
             return chunk
 
@@ -158,9 +162,11 @@ def test_parser_uses_bounded_reads(storage):
 
 
 def test_storage_read_error_is_not_intercepted(storage):
-    with patch.object(storage, "open", side_effect=OSError("read failed")):
-        with pytest.raises(OSError, match="read failed"):
-            # This raises an OS error, not an invalid PDF error
-            prepare_pdf(BytesIO(pdf_bytes()), storage, max_bytes=100_000)
+    with (
+        patch.object(storage, "open", side_effect=OSError("read failed")),
+        pytest.raises(OSError, match="read failed"),
+    ):
+        # This raises an OS error, not an invalid PDF error
+        prepare_pdf(BytesIO(pdf_bytes()), storage, max_bytes=100_000)
 
     assert remaining_files(storage) == []

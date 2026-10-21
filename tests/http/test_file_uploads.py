@@ -41,7 +41,7 @@ def test_receive_limit_stops_a_chunked_upload_and_closes_partial_spool(schema_on
     app.state.settings.pdf_max_bytes = 1_100_000
     chunks = [
         b'--upload\r\nContent-Disposition: form-data; name="file"; filename="source.pdf"\r\n'
-        b'Content-Type: application/pdf\r\n\r\n' + b"x" * (1024 * 1024 + 1),
+        b"Content-Type: application/pdf\r\n\r\n" + b"x" * (1024 * 1024 + 1),
         b"x" * 200_000,
         b"\r\n--upload--\r\n",
     ]
@@ -58,11 +58,18 @@ def test_receive_limit_stops_a_chunked_upload_and_closes_partial_spool(schema_on
         sent.append(message)
 
     scope = {
-        "type": "http", "asgi": {"version": "3.0"}, "http_version": "1.1",
-        "method": "POST", "scheme": "http", "path": "/api/v1/files/source_pdf",
-        "raw_path": b"/api/v1/files/source_pdf", "root_path": "", "query_string": b"",
+        "type": "http",
+        "asgi": {"version": "3.0"},
+        "http_version": "1.1",
+        "method": "POST",
+        "scheme": "http",
+        "path": "/api/v1/files/source_pdf",
+        "raw_path": b"/api/v1/files/source_pdf",
+        "root_path": "",
+        "query_string": b"",
         "headers": [(b"content-type", b"multipart/form-data; boundary=upload")],
-        "client": ("127.0.0.1", 12345), "server": ("testserver", 80),
+        "client": ("127.0.0.1", 12345),
+        "server": ("testserver", 80),
     }
     asyncio.run(app(scope, receive, send))
     assert sent[0]["type"] == "http.response.start"

@@ -1,6 +1,6 @@
-from typing import Literal
 import logging
 from traceback import extract_tb
+from typing import Literal
 
 from fastapi import FastAPI, Request
 from fastapi.exceptions import RequestValidationError
@@ -8,7 +8,23 @@ from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 from starlette.exceptions import HTTPException
 
+from voice_archive_api.core.errors import ApplicationError
+
 logger = logging.getLogger(__name__)
+
+APPLICATION_ERROR_STATUSES = {
+    "book_not_found": 404,
+    "duplicate_book": 409,
+    "file_not_found": 404,
+    "file_already_linked": 409,
+    "file_kind_mismatch": 422,
+    "invalid_image": 422,
+    "unsupported_media_type": 415,
+    "invalid_pdf": 422,
+    "encrypted_pdf_not_supported": 422,
+    "file_too_large": 413,
+    "invalid_multipart": 400,
+}
 
 
 class ErrorDetail[CodeT: str](BaseModel):
@@ -45,8 +61,15 @@ COMMON_ERROR_RESPONSES = {
 
 
 def install_error_handlers(app: FastAPI) -> None:
+    @app.exception_handler(ApplicationError)
+    async def application_error(request: Request, exc: ApplicationError) -> JSONResponse:
+        return JSONResponse(
+            status_code=APPLICATION_ERROR_STATUSES[exc.code],
+            content={"error": {"code": exc.code, "message": exc.message}},
+        )
+
     @app.exception_handler(HTTPException)
-    async def http_error(request: Request, exc: HTTPException):
+    async def http_error(request: Request, exc: HTTPException) -> JSONResponse:
         code = {404: "route_not_found", 405: "method_not_allowed"}.get(exc.status_code, "http_error")
         return JSONResponse(
             status_code=exc.status_code,
@@ -55,7 +78,7 @@ def install_error_handlers(app: FastAPI) -> None:
         )
 
     @app.exception_handler(Exception)
-    async def unexpected_error(request: Request, exc: Exception):
+    async def unexpected_error(request: Request, exc: Exception) -> JSONResponse:
         # Stack locations and exception type are useful without recording exception
         # text/locals, which can contain SQL parameters or submitted file content.
         locations = "\n".join(
@@ -68,7 +91,7 @@ def install_error_handlers(app: FastAPI) -> None:
         )
 
     @app.exception_handler(RequestValidationError)
-    async def invalid_request(request: Request, exc: RequestValidationError):
+    async def invalid_request(request: Request, exc: RequestValidationError) -> JSONResponse:
         return JSONResponse(
             status_code=422,
             content={

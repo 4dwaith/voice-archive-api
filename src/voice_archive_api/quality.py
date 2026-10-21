@@ -5,11 +5,10 @@ import sys
 
 
 def main() -> int:
-    # Format application code; lint tests/migrations too without reformatting
-    # historical files. Type checks start with application code, not test fixtures.
+    # Format and lint all Python files; enforce strict types on application code.
     commands = (
-        ("ruff", "format", "--check", "src"),
-        ("ruff", "check", "src", "tests", "alembic"),
+        ("ruff", "format", "--check", "."),
+        ("ruff", "check", "."),
         ("mypy",),
         (
             "pytest",

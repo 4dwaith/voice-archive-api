@@ -10,13 +10,12 @@ from sqlalchemy.orm import Session
 
 from alembic import command
 from tests.file_processing.file_samples import cover_bytes, pdf_bytes
-from voice_archive_api.book_files.model import FileKind, StoredFile, PendingFileDeletion
 from voice_archive_api.book_files import service
 from voice_archive_api.book_files.covers import InvalidImage
+from voice_archive_api.book_files.model import FileKind, PendingFileDeletion, StoredFile
 from voice_archive_api.book_files.pdfs import InvalidPdf
 from voice_archive_api.books.model import Book
 from voice_archive_api.file_handling import LocalStorage
-
 
 FIRST_BOOK_FILES_REVISION = "0004_book_files"
 
@@ -32,27 +31,31 @@ def create_file(db, storage, kind):
 
 
 def file_record(kind=FileKind.COVER, **changes):
-    values = dict(kind=kind, storage_key="opaque/key", byte_size=100,
-                  created_at=datetime.now(UTC), file_metadata={})
+    values = dict(kind=kind, storage_key="opaque/key", byte_size=100, created_at=datetime.now(UTC), file_metadata={})
     values.update(changes)
     return StoredFile(**values)
+
 
 def remaining_files(storage):
     return [path for path in storage.root.rglob("*") if path.is_file()]
 
+
 @pytest.mark.parametrize("error", [RuntimeError("failure"), IntegrityError("", {}, Exception()), KeyboardInterrupt()])
 def test_file_write_rolls_back_and_preserves_errors(error):
     db = Mock(spec=Session)
-    with pytest.raises(type(error)) as raised:
-        with service.file_write(db):
-            raise error
+    with pytest.raises(type(error)) as raised, service.file_write(db):
+        raise error
     assert raised.value is error
     db.rollback.assert_called_once_with()
 
 
 def test_file_column_check_names_match_the_migration(test_engine):
-    declared_constraints = {str(check.name) for column in StoredFile.__table__.columns
-                for check in column.constraints if isinstance(check, CheckConstraint)}
+    declared_constraints = {
+        str(check.name)
+        for column in StoredFile.__table__.columns
+        for check in column.constraints
+        if isinstance(check, CheckConstraint)
+    }
     database_constraints = {check["name"] for check in inspect(test_engine).get_check_constraints("files")}
     assert declared_constraints <= database_constraints
     assert "ck_files_file_kind" in database_constraints  # Derived from naming convention
@@ -68,9 +71,13 @@ def test_prepared_files_persist_without_a_book_and_reload(test_engine, storage, 
         record = service.get_file(db, file_id, expected_kind=kind)
         assert record.kind == kind
         assert record.created_at.utcoffset() == timedelta(0)
-        assert record.file_metadata == {
-            FileKind.COVER: {"width": 16, "height": 24}, FileKind.SOURCE_PDF: {"page_count": 3},
-        }[kind]
+        assert (
+            record.file_metadata
+            == {
+                FileKind.COVER: {"width": 16, "height": 24},
+                FileKind.SOURCE_PDF: {"page_count": 3},
+            }[kind]
+        )
         with storage.open(record.storage_key) as stored:
             assert len(stored.read()) == record.byte_size
         assert remaining_files(storage) == [storage.root / record.storage_key]
@@ -129,10 +136,19 @@ def test_file_timestamp_preserves_instant(test_engine, source_timezone):
         assert db.get(StoredFile, file_id).created_at == supplied.astimezone(UTC)
 
 
-@pytest.mark.parametrize("changes", [
-    {"id": 0}, {"id": -1}, {"storage_key": ""}, {"storage_key": None},
-    {"byte_size": 0}, {"byte_size": None}, {"created_at": None}, {"kind": None},
-])
+@pytest.mark.parametrize(
+    "changes",
+    [
+        {"id": 0},
+        {"id": -1},
+        {"storage_key": ""},
+        {"storage_key": None},
+        {"byte_size": 0},
+        {"byte_size": None},
+        {"created_at": None},
+        {"kind": None},
+    ],
+)
 def test_database_rejects_invalid_common_file_fields(test_engine, changes):
     with Session(test_engine) as db:
         db.add(file_record(**changes))
@@ -142,9 +158,12 @@ def test_database_rejects_invalid_common_file_fields(test_engine, changes):
 
 def test_database_rejects_unknown_kind_even_without_python_validation(test_engine):
     from sqlalchemy import text
+
     with test_engine.begin() as connection, pytest.raises(IntegrityError):
-        connection.execute(text("""INSERT INTO files (kind, storage_key, byte_size, metadata, created_at)
-            VALUES ('unknown', 'key', 1, '{}', now())"""))
+        connection.execute(
+            text("""INSERT INTO files (kind, storage_key, byte_size, metadata, created_at)
+            VALUES ('unknown', 'key', 1, '{}', now())""")
+        )
 
 
 def test_storage_key_is_unique_across_kinds(test_engine):
@@ -182,12 +201,20 @@ def test_files_can_be_added_after_full_downgrade_and_upgrade(test_engine, migrat
         assert record.id > 0
 
 
-@pytest.mark.parametrize("kind,historical_table_name,metadata", [
-    (FileKind.COVER, "cover_files", {"width": 16, "height": 24}),
-    (FileKind.SOURCE_PDF, "source_pdf_files", {"page_count": 3}),
-], ids=["cover", "source-pdf"])
+@pytest.mark.parametrize(
+    "kind,historical_table_name,metadata",
+    [
+        (FileKind.COVER, "cover_files", {"width": 16, "height": 24}),
+        (FileKind.SOURCE_PDF, "source_pdf_files", {"page_count": 3}),
+    ],
+    ids=["cover", "source-pdf"],
+)
 def test_upgrade_from_first_file_revision_preserves_existing_files(
-    test_engine, migration_config, kind, historical_table_name, metadata,
+    test_engine,
+    migration_config,
+    kind,
+    historical_table_name,
+    metadata,
 ):
     command.downgrade(migration_config, FIRST_BOOK_FILES_REVISION)
     historical_files = Table(historical_table_name, MetaData(), autoload_with=test_engine)
@@ -205,9 +232,11 @@ def test_upgrade_from_first_file_revision_preserves_existing_files(
     with Session(test_engine) as db:
         # IDs can be remapped when the old tables merge; the storage key identifies
         # the same stored file across revisions.
-        record = db.scalars(select(StoredFile).where(
-            StoredFile.storage_key == values["storage_key"],
-        )).one()
+        record = db.scalars(
+            select(StoredFile).where(
+                StoredFile.storage_key == values["storage_key"],
+            )
+        ).one()
         assert record.kind == kind
         for field, expected in values.items():
             assert getattr(record, field) == expected, field

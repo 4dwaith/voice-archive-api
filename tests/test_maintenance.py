@@ -24,15 +24,22 @@ def test_cleanup_schedule_runs_on_startup_and_at_midnight_utc():
         assert job.coalesce
 
 
-@pytest.mark.parametrize("temporary_error,promoted_error,failures,exit_code", [
-    (None, None, 0, 0),
-    (OSError("temporary directory busy"), None, 0, 1),
-    (None, RuntimeError("database unavailable"), 0, 1),
-    (None, None, 1, 1),
-    (OSError("temporary directory busy"), RuntimeError("database unavailable"), 0, 1),
-])
+@pytest.mark.parametrize(
+    "temporary_error,promoted_error,failures,exit_code",
+    [
+        (None, None, 0, 0),
+        (OSError("temporary directory busy"), None, 0, 1),
+        (None, RuntimeError("database unavailable"), 0, 1),
+        (None, None, 1, 1),
+        (OSError("temporary directory busy"), RuntimeError("database unavailable"), 0, 1),
+    ],
+)
 def test_one_off_cleanup_attempts_all_jobs_and_disposes_engine(
-    monkeypatch, temporary_error, promoted_error, failures, exit_code,
+    monkeypatch,
+    temporary_error,
+    promoted_error,
+    failures,
+    exit_code,
 ):
     engine = Mock()
     temporary_cleanup = Mock(return_value=0, side_effect=temporary_error)
@@ -99,13 +106,16 @@ def test_three_jobs_have_independent_schedules():
     assert len(scheduler.get_jobs()) == 3
 
 
-@pytest.mark.parametrize("job,failure", [
-    ("temporary", "exception"),
-    ("promoted", "exception"),
-    ("orphan", "exception"),
-    ("promoted", "result"),
-    ("orphan", "result"),
-])
+@pytest.mark.parametrize(
+    "job,failure",
+    [
+        ("temporary", "exception"),
+        ("promoted", "exception"),
+        ("orphan", "exception"),
+        ("promoted", "result"),
+        ("orphan", "result"),
+    ],
+)
 def test_job_failure_sets_exit_status_without_skipping_other_jobs(job, failure):
     jobs = {
         "temporary": Mock(return_value=0),

@@ -12,8 +12,8 @@ from pytest_bdd import given, parsers, scenarios, then, when
 from sqlalchemy.orm import Session
 
 from tests.file_processing.file_samples import cover_bytes, pdf_bytes
-from voice_archive_api.book_files.model import FileKind, StoredFile, FileCleanupProgress, PendingFileDeletion
 from voice_archive_api.book_files import service as file_service
+from voice_archive_api.book_files.model import FileCleanupProgress, FileKind, PendingFileDeletion, StoredFile
 from voice_archive_api.books import service as book_service
 from voice_archive_api.books.schemas import BookCreate, BookPatch
 from voice_archive_api.file_handling import LocalStorage
@@ -45,28 +45,32 @@ def cli_environment(storage):
     environment = os.environ.copy()
     # Temporary-only scenarios must not connect to any database, including the
     # shared test database. Promoted setup replaces these with its isolated URL.
-    environment.update({
-        "VOICE_ARCHIVE_ENVIRONMENT": "test",
-        "VOICE_ARCHIVE_UPLOAD_ROOT": str(storage.root),
-        "VOICE_ARCHIVE_POSTGRES_USER": "unused",
-        "VOICE_ARCHIVE_POSTGRES_PASSWORD": "unused",
-        "VOICE_ARCHIVE_POSTGRES_HOST": "127.0.0.1",
-        "VOICE_ARCHIVE_POSTGRES_PORT": "1",
-        "VOICE_ARCHIVE_POSTGRES_DB": "unused",
-    })
+    environment.update(
+        {
+            "VOICE_ARCHIVE_ENVIRONMENT": "test",
+            "VOICE_ARCHIVE_UPLOAD_ROOT": str(storage.root),
+            "VOICE_ARCHIVE_POSTGRES_USER": "unused",
+            "VOICE_ARCHIVE_POSTGRES_PASSWORD": "unused",
+            "VOICE_ARCHIVE_POSTGRES_HOST": "127.0.0.1",
+            "VOICE_ARCHIVE_POSTGRES_PORT": "1",
+            "VOICE_ARCHIVE_POSTGRES_DB": "unused",
+        }
+    )
     return environment
 
 
 @given("the promoted file database is ready")
 def configure_database(test_engine, cli_environment):
     url = test_engine.url
-    cli_environment.update({
-        "VOICE_ARCHIVE_POSTGRES_USER": url.username,
-        "VOICE_ARCHIVE_POSTGRES_PASSWORD": url.password,
-        "VOICE_ARCHIVE_POSTGRES_HOST": url.host,
-        "VOICE_ARCHIVE_POSTGRES_PORT": str(url.port),
-        "VOICE_ARCHIVE_POSTGRES_DB": url.database,
-    })
+    cli_environment.update(
+        {
+            "VOICE_ARCHIVE_POSTGRES_USER": url.username,
+            "VOICE_ARCHIVE_POSTGRES_PASSWORD": url.password,
+            "VOICE_ARCHIVE_POSTGRES_HOST": url.host,
+            "VOICE_ARCHIVE_POSTGRES_PORT": str(url.port),
+            "VOICE_ARCHIVE_POSTGRES_DB": url.database,
+        }
+    )
 
 
 @given(parsers.parse("an unlinked {kind} uploaded {days:d} days ago"))
@@ -87,9 +91,14 @@ def file_link(state):
 @given("the uploaded file is linked to a book")
 def linked_file(test_engine, state):
     with Session(test_engine) as db:
-        state.book_id = book_service.create_book(db, BookCreate(
-            title="File owner", language="en", **{file_link(state): state.file.id},
-        )).id
+        state.book_id = book_service.create_book(
+            db,
+            BookCreate(
+                title="File owner",
+                language="en",
+                **{file_link(state): state.file.id},
+            ),
+        ).id
 
 
 @given("maintenance has already scanned that upload date")

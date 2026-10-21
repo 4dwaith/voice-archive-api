@@ -13,20 +13,16 @@ from alembic import command
 from voice_archive_api.core.application import Application
 from voice_archive_api.core.config import Settings
 from voice_archive_api.db.session import create_database_engine, get_db
-from voice_archive_api.main import create_app
 from voice_archive_api.file_handling import LocalStorage
+from voice_archive_api.main import create_app
 
 
 @pytest.fixture(scope="session")
 def test_admin_engine() -> Generator[Engine]:
     url = Settings().database_url
     if url.drivername != "postgresql+psycopg" or url.database != "voice_archive_test":
-        pytest.fail(
-            "Tests require a PostgreSQL URL targeting the dedicated voice_archive_test database"
-        )
-    engine = create_engine(
-        url, isolation_level="AUTOCOMMIT", connect_args={"connect_timeout": 5}
-    )
+        pytest.fail("Tests require a PostgreSQL URL targeting the dedicated voice_archive_test database")
+    engine = create_engine(url, isolation_level="AUTOCOMMIT", connect_args={"connect_timeout": 5})
     try:
         yield engine
     finally:
@@ -40,14 +36,10 @@ def test_database_url(test_admin_engine: Engine) -> Generator[str]:
     name = f"va_test_{uuid4().hex}"
     with test_admin_engine.connect() as connection:
         connection.connection.driver_connection.execute(
-            sql.SQL("CREATE DATABASE {} TEMPLATE template0").format(
-                sql.Identifier(name)
-            )
+            sql.SQL("CREATE DATABASE {} TEMPLATE template0").format(sql.Identifier(name))
         )
     try:
-        yield test_admin_engine.url.set(database=name).render_as_string(
-            hide_password=False
-        )
+        yield test_admin_engine.url.set(database=name).render_as_string(hide_password=False)
     finally:
         with test_admin_engine.connect() as connection:
             connection.connection.driver_connection.execute(

@@ -5,6 +5,7 @@ Revises: 0006_pending_file_deletions
 """
 
 import sqlalchemy as sa
+
 from alembic import op
 
 revision = "0007_file_cleanup_progress"
@@ -17,9 +18,11 @@ def upgrade() -> None:
     op.create_table(
         "file_cleanup_progress",
         sa.Column(
-            "id", sa.Integer(),
+            "id",
+            sa.Integer(),
             sa.CheckConstraint("id = 1", name=op.f("ck_file_cleanup_progress_singleton")),
-            nullable=False, autoincrement=False,
+            nullable=False,
+            autoincrement=False,
         ),
         sa.Column("cover_cleanup_before", sa.DateTime(timezone=True), nullable=True),
         sa.Column("source_pdf_cleanup_before", sa.DateTime(timezone=True), nullable=True),

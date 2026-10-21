@@ -69,9 +69,7 @@ def test_database_credentials_are_required(field, monkeypatch) -> None:
         Settings()
 
 
-@pytest.mark.parametrize(
-    "field", ["postgres_user", "postgres_password", "postgres_db", "postgres_host"]
-)
+@pytest.mark.parametrize("field", ["postgres_user", "postgres_password", "postgres_db", "postgres_host"])
 def test_empty_connection_fields_are_rejected(field) -> None:
     with pytest.raises(ValidationError, match=field):
         Settings(**{field: ""})

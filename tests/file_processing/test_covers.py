@@ -107,12 +107,11 @@ def test_transparency_survives_normalization(storage, format):
 
 
 def test_animated_webp_becomes_its_first_frame(storage):
-    with Image.new("RGB", (8, 8), "red") as first, Image.new("RGB", (8, 8), "blue") as second:
-        with BytesIO() as buffer:
-            # Add both images to the buffer.
-            first.save(buffer, "WEBP", save_all=True, append_images=[second], duration=100, lossless=True)
+    with Image.new("RGB", (8, 8), "red") as first, Image.new("RGB", (8, 8), "blue") as second, BytesIO() as buffer:
+        # Add both images to the buffer.
+        first.save(buffer, "WEBP", save_all=True, append_images=[second], duration=100, lossless=True)
 
-            prepared = prepare_cover(BytesIO(buffer.getvalue()), storage, max_bytes=100_000)
+        prepared = prepare_cover(BytesIO(buffer.getvalue()), storage, max_bytes=100_000)
     with storage.open(prepared.storage_key) as output, Image.open(output) as image:
         with pytest.raises(EOFError):
             # Seek to the second frame should fail.
@@ -128,26 +127,34 @@ def test_palette_transparency_survives_normalization(storage):
         image.putpalette([255, 0, 0])  # Palette entry 0 is red.
         image.save(buffer, "PNG", transparency=palette_index)  # Make entry 0 transparent.
         prepared = prepare_cover(BytesIO(buffer.getvalue()), storage, max_bytes=100_000)
-    with storage.open(prepared.storage_key) as output, Image.open(output) as image:
-        with image.convert("RGBA") as rgba, rgba.getchannel("A") as alpha:
-            # Minimum and maximum alpha are both zero: every pixel is transparent.
-            assert alpha.getextrema() == (0, 0)
+    with (
+        storage.open(prepared.storage_key) as output,
+        Image.open(output) as image,
+        image.convert("RGBA") as rgba,
+        rgba.getchannel("A") as alpha,
+    ):
+        # Minimum and maximum alpha are both zero: every pixel is transparent.
+        assert alpha.getextrema() == (0, 0)
 
 
 def test_encoding_failure_removes_staged_input(storage):
     payload = image_bytes()
 
-    with patch.object(Image.Image, "save", side_effect=OSError("disk full")):
-        with pytest.raises(OSError, match="disk full"):
-            prepare_cover(BytesIO(payload), storage, max_bytes=100_000)
+    with (
+        patch.object(Image.Image, "save", side_effect=OSError("disk full")),
+        pytest.raises(OSError, match="disk full"),
+    ):
+        prepare_cover(BytesIO(payload), storage, max_bytes=100_000)
 
     assert remaining_files(storage) == []
 
 
 def test_promotion_failure_leaves_no_staged_files(storage):
-    with patch.object(storage, "promote", side_effect=OSError("promotion failed")):
-        with pytest.raises(OSError, match="promotion failed"):
-            prepare_cover(BytesIO(image_bytes()), storage, max_bytes=100_000)
+    with (
+        patch.object(storage, "promote", side_effect=OSError("promotion failed")),
+        pytest.raises(OSError, match="promotion failed"),
+    ):
+        prepare_cover(BytesIO(image_bytes()), storage, max_bytes=100_000)
     assert remaining_files(storage) == []
 
 
@@ -159,7 +166,7 @@ def test_streaming_input_needs_no_seek_or_filename(storage):
 
         def read(self, size: int, /) -> bytes:
             size = min(size, 17)
-            chunk = payload[self.offset:self.offset + size]
+            chunk = payload[self.offset : self.offset + size]
             self.offset += len(chunk)
             return chunk
 

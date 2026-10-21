@@ -3,12 +3,14 @@
 import argparse
 import logging
 import signal
+from collections.abc import Callable
 from datetime import UTC, datetime
 from functools import partial
+from types import FrameType
 
 from apscheduler.schedulers.blocking import BlockingScheduler
 
-from voice_archive_api.book_files.cleanup import run_orphan_cleanup, run_promoted_cleanup
+from voice_archive_api.book_files.cleanup import CleanupResult, run_orphan_cleanup, run_promoted_cleanup
 from voice_archive_api.core.config import Settings
 from voice_archive_api.db.session import create_database_engine, create_session_factory
 from voice_archive_api.file_handling import LocalStorage
@@ -17,7 +19,13 @@ from voice_archive_api.file_handling.cleanup import run_temporary_cleanup
 logger = logging.getLogger(__name__)
 
 
-def build_scheduler(temporary_job, promoted_job, orphan_job, *, now: datetime | None = None) -> BlockingScheduler:
+def build_scheduler(
+    temporary_job: Callable[[], object] | None,
+    promoted_job: Callable[[], object] | None,
+    orphan_job: Callable[[], object] | None,
+    *,
+    now: datetime | None = None,
+) -> BlockingScheduler:
     scheduler = BlockingScheduler(timezone=UTC)
     first_run = now or datetime.now(UTC)
     for job_id, job in (
@@ -41,7 +49,11 @@ def build_scheduler(temporary_job, promoted_job, orphan_job, *, now: datetime | 
     return scheduler
 
 
-def run_in_sequence(temporary_job, promoted_job, orphan_job) -> int:
+def run_in_sequence(
+    temporary_job: Callable[[], int] | None,
+    promoted_job: Callable[[], CleanupResult] | None,
+    orphan_job: Callable[[], CleanupResult] | None,
+) -> int:
     """Attempt each selected job even if another fails; return its combined exit status."""
     failed = False
     if temporary_job is not None:
@@ -98,7 +110,7 @@ def main() -> int:
             return run_in_sequence(temporary_job, promoted_job, orphan_job)
         scheduler = build_scheduler(temporary_job, promoted_job, orphan_job)
 
-        def stop(*_):
+        def stop(_signal: int | None = None, _frame: FrameType | None = None) -> None:
             if scheduler.running:
                 scheduler.shutdown(wait=True)
 

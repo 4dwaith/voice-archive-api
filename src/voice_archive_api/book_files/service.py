@@ -4,13 +4,14 @@ from datetime import UTC, datetime
 
 from sqlalchemy import and_, exists, select
 from sqlalchemy.orm import InstrumentedAttribute, Session
+from sqlalchemy.sql.elements import ColumnElement
 
 from voice_archive_api.book_files.covers import prepare_cover
 from voice_archive_api.book_files.model import FileKind, FileStrategy, PendingFileDeletion, StoredFile
 from voice_archive_api.book_files.pdfs import prepare_pdf
 from voice_archive_api.books.model import Book
+from voice_archive_api.core.errors import ApplicationError
 from voice_archive_api.file_handling import BinarySource, Storage
-
 
 FILE_STRATEGIES = {
     FileKind.COVER: FileStrategy(prepare_cover, "cover_max_bytes", "image/webp", "cover.webp"),
@@ -24,16 +25,19 @@ BOOK_FILE_FIELDS = {
 }
 
 
-class FileNotFound(Exception):
-    pass
+class FileNotFound(ApplicationError):
+    code = "file_not_found"
+    message = "File not found"
 
 
-class FileAlreadyLinked(Exception):
-    pass
+class FileAlreadyLinked(ApplicationError):
+    code = "file_already_linked"
+    message = "File is already linked to a book"
 
 
-class FileKindMismatch(Exception):
-    pass
+class FileKindMismatch(ApplicationError):
+    code = "file_kind_mismatch"
+    message = "File kind does not match the book field"
 
 
 def queue_file_deletion(db: Session, record: StoredFile, *, now: datetime) -> None:
@@ -51,7 +55,7 @@ def get_file(db: Session, file_id: int, *, expected_kind: FileKind | None = None
     return record
 
 
-def file_is_unlinked(file_id: int | InstrumentedAttribute[int] = StoredFile.id):
+def file_is_unlinked(file_id: int | InstrumentedAttribute[int] = StoredFile.id) -> ColumnElement[bool]:
     """Build independent NOT EXISTS checks so cleanup can use indexed anti joins."""
     return and_(
         *(~exists(select(Book.id).where(getattr(Book, field) == file_id)) for field in BOOK_FILE_FIELDS.values())

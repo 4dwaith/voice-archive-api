@@ -12,6 +12,7 @@ from voice_archive_api.file_handling.local_storage import CHUNK_SIZE, STALE_AFTE
 
 SCAN_CUTOFF = datetime(2026, 10, 14, tzinfo=UTC)
 
+
 @pytest.fixture
 def storage(tmp_path: Path) -> LocalStorage:
     return LocalStorage(tmp_path / "uploads")
@@ -122,17 +123,18 @@ def test_write_failure_removes_partial_file(storage):
     def open_with_failure(path, mode):
         return FailingOutput(original_open(path, mode))
 
-    with patch.object(Path, "open", open_with_failure):
-        with pytest.raises(OSError, match="disk full"):
-            storage.put_temporary(BytesIO(b"payload"), max_bytes=100)
+    with patch.object(Path, "open", open_with_failure), pytest.raises(OSError, match="disk full"):
+        storage.put_temporary(BytesIO(b"payload"), max_bytes=100)
     assert files(storage) == []
 
 
 def test_failed_promotion_preserves_temporary_file(storage):
     temporary = storage.put_temporary(BytesIO(b"valid"), max_bytes=100)
-    with patch("voice_archive_api.file_handling.local_storage.os.link", side_effect=OSError("failed")):
-        with pytest.raises(OSError, match="failed"):
-            storage.promote(temporary)
+    with (
+        patch("voice_archive_api.file_handling.local_storage.os.link", side_effect=OSError("failed")),
+        pytest.raises(OSError, match="failed"),
+    ):
+        storage.promote(temporary)
     assert storage.exists(temporary)
     assert len(files(storage)) == 1
 
@@ -148,9 +150,8 @@ def test_failed_temporary_unlink_rolls_back_promotion(storage):
         # Allows the unlinking to proceed from the promoted folder
         return original_unlink(path, **kwargs)
 
-    with patch.object(Path, "unlink", unlink_with_failure):
-        with pytest.raises(OSError, match="unlink failed"):
-            storage.promote(temporary)
+    with patch.object(Path, "unlink", unlink_with_failure), pytest.raises(OSError, match="unlink failed"):
+        storage.promote(temporary)
     assert storage.exists(temporary)
     assert len(files(storage)) == 1
 
@@ -226,10 +227,19 @@ def test_promotion_links_the_same_file_before_removing_the_temporary_name(storag
 @pytest.mark.parametrize(
     "key",
     [
-        "", ".", "../outside", "/tmp/outside", "C:/outside", "C:\\outside",
-        "promoted/../outside", "promoted//" + "0" * 32,
-        "promoted\\" + "0" * 32, "promoted/" + "0" * 32 + "/extra",
-        "promoted/" + "0" * 32 + ":stream", "promoted/cover.png", None,
+        "",
+        ".",
+        "../outside",
+        "/tmp/outside",
+        "C:/outside",
+        "C:\\outside",
+        "promoted/../outside",
+        "promoted//" + "0" * 32,
+        "promoted\\" + "0" * 32,
+        "promoted/" + "0" * 32 + "/extra",
+        "promoted/" + "0" * 32 + ":stream",
+        "promoted/cover.png",
+        None,
     ],
 )
 def test_invalid_keys_are_rejected_by_every_key_operation(storage, key):

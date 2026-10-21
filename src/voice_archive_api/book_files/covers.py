@@ -5,17 +5,24 @@ from typing import BinaryIO
 from PIL import Image, ImageOps, UnidentifiedImageError
 
 from voice_archive_api.book_files.model import PreparedFile
+from voice_archive_api.core.errors import ApplicationError
 from voice_archive_api.file_handling import BinarySource, Storage
 
 ACCEPTED_FORMATS = {"JPEG", "PNG", "WEBP"}
 
 
-class InvalidImage(Exception):
+class InvalidImage(ApplicationError):
     """The cover is empty, corrupt, unsafe to decode, or cannot become WebP."""
 
+    code = "invalid_image"
+    message = "Cover is empty, corrupt, or cannot be safely decoded and normalized"
 
-class UnsupportedMediaType(Exception):
+
+class UnsupportedMediaType(ApplicationError):
     """The decoded image format is not an accepted cover format."""
+
+    code = "unsupported_media_type"
+    message = "Cover must be a JPEG, PNG, or WebP image"
 
 
 def _decode_cover(source: BinaryIO) -> Image.Image:

@@ -6,6 +6,7 @@ Revises: 0007_file_cleanup_progress
 
 import sqlalchemy as sa
 from sqlalchemy.dialects import postgresql
+
 from alembic import op
 
 revision = "0008_unified_files"
@@ -17,14 +18,30 @@ depends_on = None
 def upgrade() -> None:
     op.create_table(
         "files",
-        sa.Column("id", sa.BigInteger(), sa.Identity(),
-                  sa.CheckConstraint("id > 0", name=op.f("ck_files_positive_id")), nullable=False),
-        sa.Column("kind", sa.Enum("cover", "source_pdf", native_enum=False,
-                                 create_constraint=True, name="file_kind"), nullable=False),
-        sa.Column("storage_key", sa.Text(),
-                  sa.CheckConstraint("length(storage_key) > 0", name=op.f("ck_files_storage_key_nonempty")), nullable=False),
-        sa.Column("byte_size", sa.BigInteger(),
-                  sa.CheckConstraint("byte_size > 0", name=op.f("ck_files_positive_byte_size")), nullable=False),
+        sa.Column(
+            "id",
+            sa.BigInteger(),
+            sa.Identity(),
+            sa.CheckConstraint("id > 0", name=op.f("ck_files_positive_id")),
+            nullable=False,
+        ),
+        sa.Column(
+            "kind",
+            sa.Enum("cover", "source_pdf", native_enum=False, create_constraint=True, name="file_kind"),
+            nullable=False,
+        ),
+        sa.Column(
+            "storage_key",
+            sa.Text(),
+            sa.CheckConstraint("length(storage_key) > 0", name=op.f("ck_files_storage_key_nonempty")),
+            nullable=False,
+        ),
+        sa.Column(
+            "byte_size",
+            sa.BigInteger(),
+            sa.CheckConstraint("byte_size > 0", name=op.f("ck_files_positive_byte_size")),
+            nullable=False,
+        ),
         sa.Column("metadata", postgresql.JSONB(), nullable=False),
         sa.Column("created_at", sa.DateTime(timezone=True), nullable=False),
         sa.PrimaryKeyConstraint("id", name=op.f("pk_files")),
@@ -40,16 +57,22 @@ def upgrade() -> None:
         SELECT id, 'cover', storage_key, byte_size,
                jsonb_build_object('width', width, 'height', height), created_at FROM cover_files
     """)
-    op.get_bind().execute(sa.text("""
+    op.get_bind().execute(
+        sa.text("""
         INSERT INTO files (id, kind, storage_key, byte_size, metadata, created_at)
         SELECT id + :offset, 'source_pdf', storage_key, byte_size,
                jsonb_build_object('page_count', page_count), created_at FROM source_pdf_files
-    """), {"offset": offset})
+    """),
+        {"offset": offset},
+    )
     for field, old_table in (("cover_file_id", "cover_files"), ("source_pdf_file_id", "source_pdf_files")):
         op.drop_constraint(f"fk_books_{field}_{old_table}", "books", type_="foreignkey")
-    op.get_bind().execute(sa.text(
-        "UPDATE books SET source_pdf_file_id = source_pdf_file_id + :offset WHERE source_pdf_file_id IS NOT NULL"
-    ), {"offset": offset})
+    op.get_bind().execute(
+        sa.text(
+            "UPDATE books SET source_pdf_file_id = source_pdf_file_id + :offset WHERE source_pdf_file_id IS NOT NULL"
+        ),
+        {"offset": offset},
+    )
     for field in ("cover_file_id", "source_pdf_file_id"):
         op.create_foreign_key(op.f(f"fk_books_{field}_files"), "books", "files", [field], ["id"])
     op.execute("""
@@ -69,15 +92,34 @@ def downgrade() -> None:
     for table, metadata_fields in (("cover_files", ("width", "height")), ("source_pdf_files", ("page_count",))):
         op.create_table(
             table,
-            sa.Column("id", sa.BigInteger(), sa.Identity(),
-                      sa.CheckConstraint("id > 0", name=op.f(f"ck_{table}_positive_id")), nullable=False),
-            sa.Column("storage_key", sa.Text(),
-                      sa.CheckConstraint("length(storage_key) > 0", name=op.f(f"ck_{table}_storage_key_nonempty")), nullable=False),
-            sa.Column("byte_size", sa.BigInteger(),
-                      sa.CheckConstraint("byte_size > 0", name=op.f(f"ck_{table}_positive_byte_size")), nullable=False),
-            *(sa.Column(field, sa.Integer(),
-                        sa.CheckConstraint(f"{field} > 0", name=op.f(f"ck_{table}_positive_{field}")), nullable=False)
-              for field in metadata_fields),
+            sa.Column(
+                "id",
+                sa.BigInteger(),
+                sa.Identity(),
+                sa.CheckConstraint("id > 0", name=op.f(f"ck_{table}_positive_id")),
+                nullable=False,
+            ),
+            sa.Column(
+                "storage_key",
+                sa.Text(),
+                sa.CheckConstraint("length(storage_key) > 0", name=op.f(f"ck_{table}_storage_key_nonempty")),
+                nullable=False,
+            ),
+            sa.Column(
+                "byte_size",
+                sa.BigInteger(),
+                sa.CheckConstraint("byte_size > 0", name=op.f(f"ck_{table}_positive_byte_size")),
+                nullable=False,
+            ),
+            *(
+                sa.Column(
+                    field,
+                    sa.Integer(),
+                    sa.CheckConstraint(f"{field} > 0", name=op.f(f"ck_{table}_positive_{field}")),
+                    nullable=False,
+                )
+                for field in metadata_fields
+            ),
             sa.Column("created_at", sa.DateTime(timezone=True), nullable=False),
             sa.PrimaryKeyConstraint("id", name=op.f(f"pk_{table}")),
             sa.UniqueConstraint("storage_key", name=op.f(f"uq_{table}_storage_key")),
