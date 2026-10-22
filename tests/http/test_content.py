@@ -8,17 +8,12 @@ import pytest
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
-from tests.file_processing.file_samples import cover_bytes, pdf_bytes
+from tests.file_processing.file_samples import cover_bytes, mp3_bytes, pdf_bytes
 from voice_archive_api.db.models.book import Book
 from voice_archive_api.db.models.content import BookSection, BookSegment
 from voice_archive_api.db.models.file import PendingFileDeletion, StoredFile
 from voice_archive_api.logic.content_validation.validation import validate_content
 from voice_archive_api.services.content import service
-
-
-def mp3_bytes():
-    # Forty complete MPEG1 Layer III 128kbps/44100Hz frames, about one second.
-    return (bytes.fromhex("fffb9000") + bytes(413)) * 40
 
 
 def upload(client, kind, content):

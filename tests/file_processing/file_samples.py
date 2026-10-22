@@ -48,3 +48,8 @@ def pdf_bytes_of_size(byte_size: int) -> bytes:
     padding = padding[: padding_size - 1] + b"\n"
     marker = payload.rindex(b"startxref")
     return payload[:marker] + padding + payload[marker:]
+
+
+def mp3_bytes(frame_count=40) -> bytes:
+    """Complete synthetic MPEG1 Layer III frames; forty frames last about a second."""
+    return (bytes.fromhex("fffb9000") + bytes(413)) * frame_count

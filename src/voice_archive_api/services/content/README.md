@@ -138,3 +138,19 @@ regions and alignment diagnostics, and rounds seconds to milliseconds using
 decimal round-half-up. It does not repair invalid intervals or restore the
 omitted signup page. Use ordinary file APIs to prepare media; this adapter only
 writes local JSON. The API still validates the exact referenced prepared assets.
+
+
+## Executable behavior specifications
+
+`tests/features/content/imports.feature` covers prepared publication, dry-run,
+text-only content, matching PDFs, invalid schema/graph/media, duplicate and
+concurrent imports, and linked chapter-audio deletion protection. Its valid
+synthetic dataset includes child-before-parent input, multiple PDF regions/pages,
+backward narration positions, passive alignment data, and nested audio too short
+to narrate the text, demonstrating root-only audio resolution.
+
+`tests/features/content/purge.feature` covers removal/queued cleanup, preservation
+of cover and book details, missing/stale/weak/wildcard tags, fresh-import races,
+PDF-only/empty books, and empty-to-PDF changes. Steps in
+`tests/feature_tests/test_content.py` call the actual HTTP API and inspect isolated
+PostgreSQL/storage state; no import, ownership, or purge services are mocked.

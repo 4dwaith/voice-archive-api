@@ -132,7 +132,7 @@ docker compose --profile test stop db-test
 The suite uses a separate PostgreSQL service, isolated databases, and temporary
 file storage. Coverage is printed in the terminal.
 
-- [Features](tests/features/) and [step implementations](tests/feature_tests/): executable behavior specifications.
+- [Features](tests/features/) and [step implementations](tests/feature_tests/): executable behavior specifications. Content [import](tests/features/content/imports.feature) and [purge](tests/features/content/purge.feature) scenarios exercise real uploads, publication/dry-run, rejected input, concurrent import, and conditional cleanup.
 - [Contracts](tests/contract/): request/response schemas and OpenAPI declarations.
 - [Logic](tests/logic/): pure validation, transformations, and dependency boundaries.
 - [Services](tests/services/): integrations between services, persisted data, and pure rules.
