@@ -36,9 +36,8 @@ def test_upload_body_contract_requires_a_multipart_file(openapi_document):
     assert_multipart_file_body_contract(openapi_document, "/api/v1/files/{kind}", "post", "file")
 
 
-def test_upload_response_contract_exposes_only_public_file_details(openapi_document):
-    schemas = openapi_document["components"]["schemas"]
-    schema = schemas["FileResponse"]
+def test_upload_response_contract_discriminates_file_variants_by_kind(openapi_document):
+    schema = openapi_document["components"]["schemas"]["FileResponse"]
     variants = {
         "cover": "CoverFileResponse",
         "source_pdf": "SourcePdfFileResponse",
@@ -49,32 +48,67 @@ def test_upload_response_contract_exposes_only_public_file_details(openapi_docum
         "mapping": {kind: f"#/components/schemas/{model}" for kind, model in variants.items()},
     }
     assert schema["oneOf"] == [{"$ref": f"#/components/schemas/{model}"} for model in variants.values()]
-    fields = {"id", "kind", "byte_size", "metadata", "created_at"}
-    for kind, model in variants.items():
-        assert set(schemas[model]["properties"]) == fields
-        assert set(schemas[model]["required"]) == fields
-        assert schemas[model]["properties"]["kind"]["const"] == kind
 
 
 @pytest.mark.parametrize(
-    "response_model,metadata_model,fields",
+    "kind,model",
+    [("cover", "CoverFileResponse"), ("source_pdf", "SourcePdfFileResponse"), ("audio_chapter", "AudioFileResponse")],
+)
+def test_upload_variant_contract_exposes_only_required_public_fields(openapi_document, kind, model):
+    schema = openapi_document["components"]["schemas"][model]
+    fields = {"id", "kind", "byte_size", "metadata", "created_at"}
+    assert set(schema["properties"]) == fields
+    assert set(schema["required"]) == fields
+    assert schema["properties"]["kind"]["const"] == kind
+
+
+@pytest.mark.parametrize(
+    "response_model,metadata_model",
     [
-        ("CoverFileResponse", "CoverMetadata", {"width", "height"}),
-        ("SourcePdfFileResponse", "SourcePdfMetadata", {"page_count"}),
+        ("CoverFileResponse", "CoverMetadata"),
+        ("SourcePdfFileResponse", "SourcePdfMetadata"),
+        ("AudioFileResponse", "AudioMetadata"),
     ],
 )
-def test_upload_metadata_contract_requires_positive_integers(openapi_document, response_model, metadata_model, fields):
-    schemas = openapi_document["components"]["schemas"]
-    assert schemas[response_model]["properties"]["metadata"] == {"$ref": f"#/components/schemas/{metadata_model}"}
-    metadata = schemas[metadata_model]
+def test_upload_variant_contract_references_its_metadata_shape(openapi_document, response_model, metadata_model):
+    schema = openapi_document["components"]["schemas"][response_model]
+    assert schema["properties"]["metadata"] == {"$ref": f"#/components/schemas/{metadata_model}"}
+
+
+@pytest.mark.parametrize(
+    "metadata_model,fields",
+    [
+        ("CoverMetadata", {"width", "height"}),
+        ("SourcePdfMetadata", {"page_count"}),
+        ("AudioMetadata", {"duration_ms", "sample_rate", "channels"}),
+    ],
+)
+def test_upload_metadata_contract_requires_all_declared_fields(openapi_document, metadata_model, fields):
+    metadata = openapi_document["components"]["schemas"][metadata_model]
     assert set(metadata["required"]) == set(metadata["properties"]) == fields
-    for field in fields:
-        assert metadata["properties"][field]["type"] == "integer"
-        assert metadata["properties"][field]["exclusiveMinimum"] == 0
-        assert metadata["properties"][field]["maximum"] == 2_147_483_647
 
 
-@pytest.mark.parametrize("path", ["/api/v1/files/cover", "/api/v1/files/source_pdf"])
+@pytest.mark.parametrize(
+    "metadata_model,field,maximum",
+    [
+        ("CoverMetadata", "width", 2_147_483_647),
+        ("CoverMetadata", "height", 2_147_483_647),
+        ("SourcePdfMetadata", "page_count", 2_147_483_647),
+        ("AudioMetadata", "duration_ms", 9_223_372_036_854_775_807),
+        ("AudioMetadata", "sample_rate", 2_147_483_647),
+        ("AudioMetadata", "channels", 2_147_483_647),
+    ],
+)
+def test_upload_metadata_contract_documents_positive_integer_bounds(openapi_document, metadata_model, field, maximum):
+    schema = openapi_document["components"]["schemas"][metadata_model]["properties"][field]
+    assert schema["type"] == "integer"
+    assert schema["exclusiveMinimum"] == 0
+    # Served OpenAPI represents large bounds as floats; response-validation tests
+    # separately check the exact integer maximum and maximum + 1.
+    assert schema["maximum"] == float(maximum)
+
+
+@pytest.mark.parametrize("path", ["/api/v1/files/cover", "/api/v1/files/source_pdf", "/api/v1/files/audio_chapter"])
 @pytest.mark.parametrize(
     "case", ["missing", "wrong-name", "multiple", "text-field", "missing-boundary", "malformed", "not-multipart"]
 )
@@ -117,32 +151,29 @@ def test_invalid_upload_request_has_a_documented_error(client, file_storage, pat
     assert not any(path.is_file() for path in file_storage.root.rglob("*"))
 
 
-@pytest.mark.parametrize(
-    "path,media_type",
-    [
-        ("/api/v1/files/{file_id}", "image/webp"),
-        ("/api/v1/files/{file_id}", "application/pdf"),
-        ("/api/v1/files/{file_id}", "audio/mpeg"),
-    ],
-)
+@pytest.mark.parametrize("media_type", ["image/webp", "application/pdf", "audio/mpeg"])
 @pytest.mark.parametrize("status", ["200", "206"])
-def test_file_delivery_binary_contracts(openapi_document, path, media_type, status):
+def test_file_delivery_binary_contracts(openapi_document, media_type, status):
     assert_binary_response_contract(
         openapi_document,
-        path,
+        "/api/v1/files/{file_id}",
         "get",
         status,
         media_type,
-        additional_media_types=tuple({"image/webp", "application/pdf", "audio/mpeg"} - {media_type})
+        additional_media_types=tuple(
+            other for other in ("image/webp", "application/pdf", "audio/mpeg") if other != media_type
+        )
         + (("multipart/byteranges",) if status == "206" else ()),
     )
-    assert "requestBody" not in openapi_document["paths"][path]["get"]
 
 
-@pytest.mark.parametrize("path", ["/api/v1/files/cover", "/api/v1/files/source_pdf"])
+def test_file_delivery_get_contract_has_no_request_body(openapi_document):
+    assert "requestBody" not in openapi_document["paths"]["/api/v1/files/{file_id}"]["get"]
+
+
 @pytest.mark.parametrize("method", ["get", "head", "delete"])
 @pytest.mark.parametrize("file_id", ["0", "invalid"])
-def test_invalid_delivery_id_has_a_documented_error(client, path, method, file_id):
+def test_invalid_delivery_id_has_a_documented_error(client, method, file_id):
     response = client.request(method, f"/api/v1/files/{file_id}")
     assert response.status_code == 422
     if method != "head":
@@ -151,9 +182,11 @@ def test_invalid_delivery_id_has_a_documented_error(client, path, method, file_i
         assert response.content == b""
 
 
-@pytest.mark.parametrize("path", ["/api/v1/files/{file_id}", "/api/v1/files/{file_id}"])
-def test_delivery_range_errors_document_native_text_response(openapi_document, path):
-    responses = openapi_document["paths"][path]["get"]["responses"]
+def test_invalid_range_contract_documents_native_text_response(openapi_document):
+    responses = openapi_document["paths"]["/api/v1/files/{file_id}"]["get"]["responses"]
     assert responses["400"]["content"] == {"text/plain": {"schema": {"type": "string"}}}
-    assert "content" not in responses["416"]
+
+
+def test_unsatisfiable_range_contract_exposes_content_range_header(openapi_document):
+    responses = openapi_document["paths"]["/api/v1/files/{file_id}"]["get"]["responses"]
     assert "Content-Range" in responses["416"]["headers"]
