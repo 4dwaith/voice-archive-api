@@ -10,13 +10,14 @@ from sqlalchemy.orm import Session, sessionmaker
 
 from alembic import command
 from tests.database.content_helpers import add_audio, add_section
-from voice_archive_api.domain.books import service as book_service
-from voice_archive_api.domain.books.model import Book
-from voice_archive_api.domain.books.schemas import BookCreate
-from voice_archive_api.domain.content.model import BookSection
-from voice_archive_api.domain.files.cleanup import queue_expired_files
-from voice_archive_api.domain.files.model import FileCleanupProgress, FileKind, PendingFileDeletion, StoredFile
-from voice_archive_api.domain.files.service import (
+from voice_archive_api.db.models.book import Book
+from voice_archive_api.db.models.content import BookSection
+from voice_archive_api.db.models.file import FileCleanupProgress, PendingFileDeletion, StoredFile
+from voice_archive_api.logic.files import FileKind
+from voice_archive_api.services.books import service as book_service
+from voice_archive_api.services.books.schemas import BookCreate
+from voice_archive_api.services.files.cleanup import queue_expired_files
+from voice_archive_api.services.files.service import (
     FileAlreadyLinked,
     FileKindMismatch,
     FileNotFound,

@@ -8,9 +8,10 @@ from sqlalchemy.orm import Session
 
 from tests.database.content_helpers import add_audio, add_section, add_segment
 from tests.database.files.test_file_ownership import add_book, add_file
-from voice_archive_api.domain.books.service import delete_book
-from voice_archive_api.domain.content.model import BookSection, BookSegment, SectionKind, SegmentKind
-from voice_archive_api.domain.files.model import PendingFileDeletion, StoredFile
+from voice_archive_api.db.models.content import BookSection, BookSegment
+from voice_archive_api.db.models.file import PendingFileDeletion, StoredFile
+from voice_archive_api.logic.content_validation.kinds import SectionKind, SegmentKind
+from voice_archive_api.services.books.service import delete_book
 
 
 def test_content_roundtrip_and_auto_generated_pages(test_engine):

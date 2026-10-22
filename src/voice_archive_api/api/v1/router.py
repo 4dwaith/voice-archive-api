@@ -1,12 +1,12 @@
-from typing import Annotated, Literal
+from typing import Annotated
 
 from fastapi import APIRouter, Depends
 from fastapi.responses import JSONResponse
-from pydantic import BaseModel
 from sqlalchemy import text
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 
+from voice_archive_api.api.schemas.health import HealthResponse, NotReadyResponse
 from voice_archive_api.api.v1.books import router as books_router
 from voice_archive_api.api.v1.content import router as content_router
 from voice_archive_api.api.v1.files import router as files_router
@@ -16,16 +16,6 @@ router = APIRouter()
 router.include_router(books_router)
 router.include_router(content_router)
 router.include_router(files_router)
-
-
-class HealthResponse(BaseModel):
-    status: Literal["ok"]
-    api_version: Literal["v1"]
-
-
-class NotReadyResponse(BaseModel):
-    status: Literal["unavailable"]
-    api_version: Literal["v1"]
 
 
 @router.get(

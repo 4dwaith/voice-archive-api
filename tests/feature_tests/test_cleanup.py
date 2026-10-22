@@ -12,11 +12,12 @@ from pytest_bdd import given, parsers, scenarios, then, when
 from sqlalchemy.orm import Session
 
 from tests.file_processing.file_samples import cover_bytes, pdf_bytes
-from voice_archive_api.domain.books import service as book_service
-from voice_archive_api.domain.books.schemas import BookCreate, BookPatch
-from voice_archive_api.domain.files import service as file_service
-from voice_archive_api.domain.files.model import FileCleanupProgress, FileKind, PendingFileDeletion, StoredFile
+from voice_archive_api.db.models.file import FileCleanupProgress, PendingFileDeletion, StoredFile
 from voice_archive_api.file_handling import LocalStorage
+from voice_archive_api.logic.files import FileKind
+from voice_archive_api.services.books import service as book_service
+from voice_archive_api.services.books.schemas import BookCreate, BookPatch
+from voice_archive_api.services.files import service as file_service
 
 scenarios("../features/maintenance")
 

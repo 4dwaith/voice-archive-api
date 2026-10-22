@@ -9,11 +9,11 @@ from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from tests.file_processing.file_samples import cover_bytes, pdf_bytes
-from voice_archive_api.application.content_validation.validation import validate_content
-from voice_archive_api.domain.books.model import Book
-from voice_archive_api.domain.content import service
-from voice_archive_api.domain.content.model import BookSection, BookSegment
-from voice_archive_api.domain.files.model import PendingFileDeletion, StoredFile
+from voice_archive_api.db.models.book import Book
+from voice_archive_api.db.models.content import BookSection, BookSegment
+from voice_archive_api.db.models.file import PendingFileDeletion, StoredFile
+from voice_archive_api.logic.content_validation.validation import validate_content
+from voice_archive_api.services.content import service
 
 
 def mp3_bytes():
@@ -276,7 +276,7 @@ def test_concurrent_books_cannot_claim_the_same_media(client, test_engine):
     barrier = Barrier(2)
 
     def attempt(book_id):
-        from voice_archive_api.application.content_validation.validation import ContentValidationError
+        from voice_archive_api.logic.content_validation.validation import ContentValidationError
 
         with Session(test_engine) as db:
             barrier.wait(timeout=5)

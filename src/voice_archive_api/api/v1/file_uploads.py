@@ -1,7 +1,6 @@
 """Request bounds and errors for file uploads."""
 
 from collections.abc import Callable, Coroutine
-from typing import Literal
 
 from fastapi import Request, Response
 from fastapi.exceptions import RequestValidationError
@@ -10,12 +9,11 @@ from python_multipart.exceptions import MultipartParseError
 from starlette.exceptions import HTTPException
 from starlette.types import Message
 
-from voice_archive_api.api.errors import ErrorResponse
 from voice_archive_api.core.dependencies import get_app_settings
 from voice_archive_api.core.errors import ApplicationError
-from voice_archive_api.domain.files.model import FileKind
-from voice_archive_api.domain.files.service import FILE_STRATEGIES
 from voice_archive_api.file_handling import FileTooLarge
+from voice_archive_api.logic.files import FileKind
+from voice_archive_api.services.files.service import FILE_STRATEGIES
 
 MULTIPART_OVERHEAD_BYTES = 64 * 1024
 
@@ -25,10 +23,6 @@ class InvalidMultipart(ApplicationError):
 
     code = "invalid_multipart"
     message = "Expected a multipart upload with one file field named 'file'"
-
-
-class FileUploadErrorResponse(ErrorResponse[Literal["file_too_large", "invalid_multipart"]]):
-    """Errors shared by cover, PDF, and MP3 upload requests."""
 
 
 class UploadRoute(APIRoute):

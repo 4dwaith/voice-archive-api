@@ -8,8 +8,9 @@ from sqlalchemy.orm import Session
 
 from alembic import command
 from voice_archive_api.db.base import Base
-from voice_archive_api.domain.books.model import Book
-from voice_archive_api.domain.files.model import FileCleanupProgress, FileKind, PendingFileDeletion, StoredFile
+from voice_archive_api.db.models.book import Book
+from voice_archive_api.db.models.file import FileCleanupProgress, PendingFileDeletion, StoredFile
+from voice_archive_api.logic.files import FileKind
 
 
 def test_current_migration_schema_matches_models(test_engine):

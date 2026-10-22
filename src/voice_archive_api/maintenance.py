@@ -12,9 +12,9 @@ from apscheduler.schedulers.blocking import BlockingScheduler
 
 from voice_archive_api.core.config import Settings
 from voice_archive_api.db.session import create_database_engine, create_session_factory
-from voice_archive_api.domain.files.cleanup import CleanupResult, run_orphan_cleanup, run_promoted_cleanup
 from voice_archive_api.file_handling import LocalStorage
 from voice_archive_api.file_handling.cleanup import run_temporary_cleanup
+from voice_archive_api.services.files.cleanup import CleanupResult, run_orphan_cleanup, run_promoted_cleanup
 
 logger = logging.getLogger(__name__)
 

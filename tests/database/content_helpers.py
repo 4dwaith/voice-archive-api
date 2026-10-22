@@ -3,8 +3,9 @@
 from datetime import UTC, datetime, timedelta
 from uuid import uuid4
 
-from voice_archive_api.domain.content.model import BookSection, BookSegment
-from voice_archive_api.domain.files.model import FileKind, StoredFile
+from voice_archive_api.db.models.content import BookSection, BookSegment
+from voice_archive_api.db.models.file import StoredFile
+from voice_archive_api.logic.files import FileKind
 
 
 def add_section(db, book_id, **test_delta):

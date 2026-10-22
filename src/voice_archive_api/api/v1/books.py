@@ -1,31 +1,20 @@
-from typing import Annotated, Any, Literal
+from typing import Annotated, Any
 
 from fastapi import APIRouter, Depends, Path, Query, Response
 from sqlalchemy.orm import Session
 
-from voice_archive_api.api.errors import ErrorResponse, ValidationErrorResponse
-from voice_archive_api.api.v1.files import FileErrorResponse
+from voice_archive_api.api.schemas.books import BookErrorResponse
+from voice_archive_api.api.schemas.errors import ValidationErrorResponse
+from voice_archive_api.api.schemas.files import FileErrorResponse
+from voice_archive_api.db.models.book import Book
 from voice_archive_api.db.session import get_db
-from voice_archive_api.domain.books import service
-from voice_archive_api.domain.books.model import Book
-from voice_archive_api.domain.books.schemas import (
+from voice_archive_api.services.books import service
+from voice_archive_api.services.books.schemas import (
     BookCreate,
     BookList,
     BookPatch,
     BookResponse,
 )
-
-type BookErrorCode = Literal[
-    "book_not_found",
-    "duplicate_book",
-    "file_already_linked",
-    "content_purge_required",
-]
-
-
-class BookErrorResponse(ErrorResponse[BookErrorCode]):
-    """HTTP error envelope for book operations."""
-
 
 router = APIRouter(
     prefix="/books",

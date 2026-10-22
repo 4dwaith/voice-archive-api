@@ -9,16 +9,16 @@ import pytest
 from asgi_correlation_id import correlation_id
 from fastapi.testclient import TestClient
 
-from voice_archive_api.api.errors import HttpErrorResponse, InternalErrorResponse, ValidationErrorResponse
+from voice_archive_api.api.schemas.errors import HttpErrorResponse, InternalErrorResponse, ValidationErrorResponse
 from voice_archive_api.api.v1.file_uploads import InvalidMultipart
 from voice_archive_api.core.config import Settings
 from voice_archive_api.core.errors import ApplicationError
-from voice_archive_api.domain.books.service import BookNotFound, DuplicateBook
-from voice_archive_api.domain.files.covers import InvalidImage, UnsupportedMediaType
-from voice_archive_api.domain.files.pdfs import EncryptedPdfNotSupported, InvalidPdf
-from voice_archive_api.domain.files.service import FileAlreadyLinked, FileKindMismatch, FileNotFound
 from voice_archive_api.file_handling import FileTooLarge
 from voice_archive_api.main import create_app
+from voice_archive_api.services.books.service import BookNotFound, DuplicateBook
+from voice_archive_api.services.files.covers import InvalidImage, UnsupportedMediaType
+from voice_archive_api.services.files.pdfs import EncryptedPdfNotSupported, InvalidPdf
+from voice_archive_api.services.files.service import FileAlreadyLinked, FileKindMismatch, FileNotFound
 
 logger = logging.getLogger("voice_archive_api.test_probe")
 

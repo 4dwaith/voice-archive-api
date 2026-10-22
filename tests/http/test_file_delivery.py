@@ -10,11 +10,11 @@ from tests.database.content_helpers import add_audio, add_section
 from tests.database.files.test_file_ownership import add_book
 from voice_archive_api.core.dependencies import get_file_delivery
 from voice_archive_api.db.session import get_db
-from voice_archive_api.domain.files import service
-from voice_archive_api.domain.files.audio import InvalidAudio
-from voice_archive_api.domain.files.model import FileKind
 from voice_archive_api.file_handling import LocalStorage
 from voice_archive_api.file_handling.local_file_delivery import LocalFileDelivery
+from voice_archive_api.logic.files import FileKind
+from voice_archive_api.services.files import service
+from voice_archive_api.services.files.audio import InvalidAudio
 
 
 @pytest.mark.parametrize("method", ["GET", "HEAD"])
@@ -73,7 +73,7 @@ def test_section_file_http_delete_guard_and_invalid_audio_upload(client, applica
 def test_audio_registry_delivery_and_invalid_preparation(client, application, file_storage):
     from io import BytesIO
 
-    from voice_archive_api.domain.files.service import create_file
+    from voice_archive_api.services.files.service import create_file
 
     data = b"synthetic invalid MP3 bytes"
     key = file_storage.promote(file_storage.put_temporary(BytesIO(data), max_bytes=1000))

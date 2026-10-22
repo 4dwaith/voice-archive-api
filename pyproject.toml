@@ -76,5 +76,5 @@ module = ["mutagen.*"]
 ignore_missing_imports = true
 
 [project.scripts]
-import-book-content = "voice_archive_api.content_cli:main"
+import-book-content = "voice_archive_api.cli.content_import:main"
 

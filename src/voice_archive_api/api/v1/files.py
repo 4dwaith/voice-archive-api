@@ -1,33 +1,19 @@
-from typing import Annotated, Any, Literal
+from typing import Annotated, Any
 
 from fastapi import APIRouter, Depends, File, Path, Response, UploadFile
 from sqlalchemy.orm import Session
 
-from voice_archive_api.api.errors import ErrorResponse, ValidationErrorResponse
-from voice_archive_api.api.v1.file_uploads import FileUploadErrorResponse, UploadRoute
+from voice_archive_api.api.schemas.errors import ValidationErrorResponse
+from voice_archive_api.api.schemas.files import FileErrorResponse, FileUploadErrorResponse
+from voice_archive_api.api.v1.file_uploads import UploadRoute
 from voice_archive_api.core.dependencies import AppSettings, Delivery, FileStorage
+from voice_archive_api.db.models.file import StoredFile
 from voice_archive_api.db.session import get_db
-from voice_archive_api.domain.files import service
-from voice_archive_api.domain.files.model import FileKind, StoredFile
-from voice_archive_api.domain.files.schemas import FileResponse
-from voice_archive_api.domain.files.service import FILE_STRATEGIES
 from voice_archive_api.file_handling.file_delivery import delivery_parameters, delivery_responses
-
-type FileErrorCode = Literal[
-    "file_not_found",
-    "file_already_linked",
-    "file_kind_mismatch",
-    "invalid_image",
-    "unsupported_media_type",
-    "invalid_pdf",
-    "encrypted_pdf_not_supported",
-    "invalid_audio",
-]
-
-
-class FileErrorResponse(ErrorResponse[FileErrorCode]):
-    """File operation and preparation errors."""
-
+from voice_archive_api.logic.files import FileKind
+from voice_archive_api.services.files import service
+from voice_archive_api.services.files.schemas import FileResponse
+from voice_archive_api.services.files.service import FILE_STRATEGIES
 
 router = APIRouter(prefix="/files", tags=["Files"], route_class=UploadRoute)
 FileId = Annotated[int, Path(gt=0, le=9_223_372_036_854_775_807)]

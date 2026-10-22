@@ -8,9 +8,9 @@ from sqlalchemy.exc import DataError, IntegrityError
 from sqlalchemy.orm import Session
 
 from alembic import command
-from voice_archive_api.domain.books import service
-from voice_archive_api.domain.books.model import Book
-from voice_archive_api.domain.books.schemas import BookCreate
+from voice_archive_api.db.models.book import Book
+from voice_archive_api.services.books import service
+from voice_archive_api.services.books.schemas import BookCreate
 
 FIRST_BOOK_REVISION = "0002_book_metadata"
 

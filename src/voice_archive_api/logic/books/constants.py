@@ -1,0 +1,4 @@
+# Book metadata length limits
+TITLE_LIMIT = 750
+AUTHOR_LIMIT = 450
+DESCRIPTION_LIMIT = 15_000

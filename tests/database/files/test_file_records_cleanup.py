@@ -11,12 +11,13 @@ from alembic import command
 from tests.database.content_helpers import add_audio, add_section
 from tests.database.files.test_file_ownership import add_book
 from tests.file_processing.file_samples import cover_bytes, pdf_bytes
-from voice_archive_api.domain.books import service as book_service
-from voice_archive_api.domain.books.model import Book
-from voice_archive_api.domain.books.schemas import BookCreate, BookPatch
-from voice_archive_api.domain.files import cleanup, service
-from voice_archive_api.domain.files.model import FileCleanupProgress, FileKind, PendingFileDeletion, StoredFile
+from voice_archive_api.db.models.book import Book
+from voice_archive_api.db.models.file import FileCleanupProgress, PendingFileDeletion, StoredFile
 from voice_archive_api.file_handling import LocalStorage
+from voice_archive_api.logic.files import FileKind
+from voice_archive_api.services.books import service as book_service
+from voice_archive_api.services.books.schemas import BookCreate, BookPatch
+from voice_archive_api.services.files import cleanup, service
 
 # Freeze the time to this point - all files and rows prepared will be relative to this point
 NOW = datetime(2026, 10, 21, tzinfo=UTC)

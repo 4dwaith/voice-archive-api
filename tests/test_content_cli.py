@@ -10,12 +10,12 @@ from sqlalchemy.orm import Session
 
 from tests.database.content_helpers import add_audio
 from voice_archive_api.cli import content_import
-from voice_archive_api.domain.books.model import Book
-from voice_archive_api.domain.books.schemas import BookCreate
-from voice_archive_api.domain.books.service import create_book
-from voice_archive_api.domain.content.model import BookSection, BookSegment
-from voice_archive_api.domain.content.schemas import ImportResult
-from voice_archive_api.domain.files.model import StoredFile
+from voice_archive_api.db.models.book import Book
+from voice_archive_api.db.models.content import BookSection, BookSegment
+from voice_archive_api.db.models.file import StoredFile
+from voice_archive_api.services.books.schemas import BookCreate
+from voice_archive_api.services.books.service import create_book
+from voice_archive_api.services.content.schemas import ImportResult
 
 
 def payload(audio_id=None):

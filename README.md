@@ -134,7 +134,8 @@ file storage. Coverage is printed in the terminal.
 
 - [Features](tests/features/) and [step implementations](tests/feature_tests/): executable behavior specifications.
 - [Contracts](tests/contract/): request/response schemas and OpenAPI declarations.
-- [Application](tests/application/): capability rules and integrations, including prepared-content validation.
+- [Logic](tests/logic/): pure validation, transformations, and dependency boundaries.
+- [Services](tests/services/): integrations between services, persisted data, and pure rules.
 - [Database](tests/database/): constraints, transactions, concurrency, and migrations.
 - [File processing](tests/file_processing/) and [HTTP](tests/http/): file preparation/storage and request handling.
 
@@ -226,17 +227,30 @@ Credentials stay in the ignored environment files, outside the saved configurati
 
 ## Code and migrations
 
-Under [src/voice_archive_api](src/voice_archive_api/), `domain/` groups related
-models and services into `books/`, `content/`, and `files/`. These services
-own database access and transactions for their capabilities. `application/` holds pure logic;
-its `content_validation/` module owns prepared-content validation and its guide,
-JSON Schema, and example. The content domain service owns publication and its
-transaction, calling the pure validation module. Each application module keeps one README alongside its
-implementation. Domain services supply data to pure logic and persist its results. Its tests
-mirror the module name under `tests/application/`.
-`file_handling/` provides storage and delivery;
-`api/` defines HTTP contracts; `core/` and `db/` provide configuration, dependencies,
-and database resources. `main.py` wires the application together.
+Under [src/voice_archive_api](src/voice_archive_api/), code is grouped by responsibility:
+
+| Package | Responsibility |
+| --- | --- |
+| `logic/` | Pure rules, validation, transformations, enums, and data snapshots; no database, service, HTTP, or storage implementation imports |
+| `services/` | Book/content/file operations, database transactions, file preparation and cleanup; service input/result schemas stay with each capability |
+| `db/models/` | SQLAlchemy models in `book.py`, `content.py`, and `file.py`; the package registers complete metadata for sessions and Alembic |
+| `api/` | HTTP routes and error handling; HTTP response schemas live in `api/schemas/` |
+| `cli/` | Local commands calling services directly |
+| `file_handling/` | Storage and streaming mechanics |
+| `core/` and `db/` | Configuration, dependencies, logging, and database resources |
+
+`main.py` wires the application together. APIs/CLI call services; services load
+and lock data, call pure logic, and persist the results. Pure logic receives values
+and prepared-asset snapshots rather than sessions or lookup callbacks. Shared
+content enums and file kinds/snapshots live in `logic/`, so validation does not
+import ORM models. Database constraint names live in `db/constants.py`.
+
+The [logic guide](src/voice_archive_api/logic/README.md) and
+[service guide](src/voice_archive_api/services/README.md) explain these boundaries.
+Content validation keeps its JSON Schema/example and guide alongside the code;
+tests mirror it under `tests/logic/`. Database-backed asset integration tests live
+under `tests/services/content/`. Existing database, HTTP, and feature tests retain
+their responsibility-based locations.
 
 Migration `0008_unified_files` combines the legacy cover/PDF tables. It retains
 storage keys and metadata, shifts PDF IDs above the cover ID range, and updates
@@ -269,14 +283,14 @@ extension, as provided by local Compose.
 
 ## Prepared content domain (phase 08)
 
-The [canonical content guide](src/voice_archive_api/application/content_validation/README.md) documents the v1 JSON Schema,
+The [canonical content guide](src/voice_archive_api/logic/content_validation/README.md) documents the v1 JSON Schema,
 complete synthetic example, HTML/text rules, coordinate/timing conventions,
 validation library, resource limits, and sample verification. Migration
 `0012_content_domain` adds sections/segments, Book import metadata, generated
 indexed page lookup, and section-owned audio file invariants. Whole-book deletion
 and maintenance include section audio. Phase 09 now implements audio preparation,
 content import/dry-run, manifest/purge, and the CLI calling the content service directly. See the
-[publication and purge guide](src/voice_archive_api/domain/content/README.md) for
+[publication and purge guide](src/voice_archive_api/services/content/README.md) for
 commands, limits, errors, cancellation, sample conversion, and media lifecycle.
 PDF links can be replaced or cleared through book PATCH until content is imported.
 After import, changing the PDF requires conditional content purge. Run migrations as usual before using the new models. A downgrade refuses

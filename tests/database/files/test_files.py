@@ -11,12 +11,13 @@ from sqlalchemy.orm import Session
 from alembic import command
 from tests.database.content_helpers import add_audio
 from tests.file_processing.file_samples import cover_bytes, pdf_bytes
-from voice_archive_api.domain.books.model import Book
-from voice_archive_api.domain.files import service
-from voice_archive_api.domain.files.covers import InvalidImage
-from voice_archive_api.domain.files.model import FileKind, PendingFileDeletion, StoredFile
-from voice_archive_api.domain.files.pdfs import InvalidPdf
+from voice_archive_api.db.models.book import Book
+from voice_archive_api.db.models.file import PendingFileDeletion, StoredFile
 from voice_archive_api.file_handling import LocalStorage
+from voice_archive_api.logic.files import FileKind
+from voice_archive_api.services.files import service
+from voice_archive_api.services.files.covers import InvalidImage
+from voice_archive_api.services.files.pdfs import InvalidPdf
 
 FIRST_BOOK_FILES_REVISION = "0004_book_files"
 

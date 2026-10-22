@@ -9,12 +9,12 @@ from pathlib import Path
 from pydantic import ValidationError
 from sqlalchemy.exc import SQLAlchemyError
 
-from voice_archive_api.application.content_validation.schemas import MAX_PAYLOAD_BYTES
-from voice_archive_api.application.content_validation.validation import ContentValidationError, validate_content
 from voice_archive_api.core.config import Settings
 from voice_archive_api.core.errors import ApplicationError
 from voice_archive_api.db.session import create_database_engine, create_session_factory
-from voice_archive_api.domain.content import service
+from voice_archive_api.logic.content_validation.schemas import MAX_PAYLOAD_BYTES
+from voice_archive_api.logic.content_validation.validation import ContentValidationError, validate_content
+from voice_archive_api.services.content import service
 
 
 def run(argv: list[str] | None = None) -> int:

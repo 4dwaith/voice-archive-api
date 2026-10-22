@@ -4,7 +4,7 @@ from types import SimpleNamespace
 import pytest
 from pydantic import TypeAdapter, ValidationError
 
-from voice_archive_api.domain.files.schemas import FileResponse
+from voice_archive_api.services.files.schemas import FileResponse
 
 
 def file_record(kind, metadata):

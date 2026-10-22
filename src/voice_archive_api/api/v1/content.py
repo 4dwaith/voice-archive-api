@@ -1,48 +1,24 @@
 """Bounded canonical ingestion, publication, and conditional content purge."""
 
 from collections.abc import Callable, Coroutine
-from typing import Annotated, Literal
+from typing import Annotated
 
 from fastapi import APIRouter, Header, Request, Response
 from fastapi.routing import APIRoute
-from pydantic import BaseModel
 from starlette.concurrency import run_in_threadpool
 from starlette.types import Message
 
-from voice_archive_api.api.errors import ErrorResponse, ValidationErrorResponse
+from voice_archive_api.api.schemas.content import ContentErrorResponse, ContentValidationResponse
+from voice_archive_api.api.schemas.errors import ValidationErrorResponse
 from voice_archive_api.api.v1.books import BookId, Database, missing_book
-from voice_archive_api.application.content_validation.schemas import MAX_PAYLOAD_BYTES, ContentInput
-from voice_archive_api.application.content_validation.validation import (
+from voice_archive_api.logic.content_validation.schemas import MAX_PAYLOAD_BYTES, ContentInput
+from voice_archive_api.logic.content_validation.validation import (
     ContentIssue,
     ContentValidationError,
     validate_content,
 )
-from voice_archive_api.domain.content import service
-from voice_archive_api.domain.content.schemas import ContentManifest, ImportResult
-
-
-class ContentIssueResponse(BaseModel):
-    code: str
-    path: str
-    source_key: str | None
-    detail: str
-
-
-class ContentValidationResponse(ErrorResponse[Literal["content_validation_error"]]):
-    issues: list[ContentIssueResponse]
-
-
-class ContentErrorResponse(
-    ErrorResponse[
-        Literal[
-            "content_exists",
-            "content_precondition_required",
-            "content_precondition_failed",
-            "content_payload_too_large",
-        ]
-    ]
-):
-    pass
+from voice_archive_api.services.content import service
+from voice_archive_api.services.content.schemas import ContentManifest, ImportResult
 
 
 class ContentRoute(APIRoute):
