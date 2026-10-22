@@ -23,6 +23,7 @@ class ContentErrorResponse(
             "content_precondition_required",
             "content_precondition_failed",
             "content_payload_too_large",
+            "content_version_mismatch",
         ]
     ]
 ):

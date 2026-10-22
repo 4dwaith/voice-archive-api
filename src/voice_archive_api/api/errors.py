@@ -29,6 +29,7 @@ APPLICATION_ERROR_STATUSES = {
     "content_exists": 409,
     "content_precondition_required": 428,
     "content_precondition_failed": 412,
+    "content_version_mismatch": 412,
 }
 
 

@@ -30,6 +30,7 @@ class BookSection(Base):
         # same-book parents and segment ownership, even though id alone is unique.
         UniqueConstraint("book_id", "id", name="uq_sections_book_id_id"),
         UniqueConstraint("book_id", "source_key", name="uq_sections_book_source_key"),
+        UniqueConstraint("book_id", "sequence", name="uq_sections_book_sequence"),
         UniqueConstraint(
             "book_id",
             "parent_id",
@@ -42,6 +43,7 @@ class BookSection(Base):
         CheckConstraint("length(source_key) BETWEEN 1 AND 256", name="source_key_length"),
         CheckConstraint("length(title) BETWEEN 1 AND 2000", name="title_length"),
         CheckConstraint("sibling_sequence >= 0", name="sibling_sequence"),
+        CheckConstraint("sequence >= 0", name="sequence"),
         CheckConstraint("parent_id IS NULL OR parent_id <> id", name="not_self_parent"),
     )
 
@@ -61,6 +63,7 @@ class BookSection(Base):
     )
     title: Mapped[str] = mapped_column(Text)
     sibling_sequence: Mapped[int] = mapped_column(Integer)
+    sequence: Mapped[int] = mapped_column(Integer)
 
 
 class BookSegment(Base):

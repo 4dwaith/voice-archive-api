@@ -2,8 +2,9 @@
 
 from collections.abc import Callable, Coroutine
 from typing import Annotated
+from uuid import UUID
 
-from fastapi import APIRouter, Header, Request, Response
+from fastapi import APIRouter, Depends, Header, Query, Request, Response
 from fastapi.routing import APIRoute
 from starlette.concurrency import run_in_threadpool
 from starlette.types import Message
@@ -11,14 +12,15 @@ from starlette.types import Message
 from voice_archive_api.api.schemas.content import ContentErrorResponse, ContentValidationResponse
 from voice_archive_api.api.schemas.errors import ValidationErrorResponse
 from voice_archive_api.api.v1.books import BookId, Database, missing_book
+from voice_archive_api.db.models.book import Book
 from voice_archive_api.logic.content_validation.schemas import MAX_PAYLOAD_BYTES, ContentInput
 from voice_archive_api.logic.content_validation.validation import (
     ContentIssue,
     ContentValidationError,
     validate_content,
 )
-from voice_archive_api.services.content import service
-from voice_archive_api.services.content.schemas import ContentManifest, ImportResult
+from voice_archive_api.services.content import reads, service
+from voice_archive_api.services.content.schemas import ContentManifest, ImportResult, SectionPage, SegmentPage
 
 
 class ContentRoute(APIRoute):
@@ -83,6 +85,50 @@ def get_content(book_id: BookId, db: Database, response: Response) -> ContentMan
     response.headers["ETag"] = etag
     response.headers["Cache-Control"] = "no-cache"
     return manifest
+
+
+def require_content_version(
+    book_id: BookId,
+    db: Database,
+    if_content_version: Annotated[UUID, Header()],
+) -> Book:
+    """Shared precondition for content collections; unrelated APIs are unaffected."""
+    return reads.lock_book(db, book_id, if_content_version)
+
+
+PinnedContent = Annotated[Book, Depends(require_content_version)]
+read_errors = missing_book | {
+    412: {"model": ContentErrorResponse},
+    422: {"model": ValidationErrorResponse},
+}
+
+
+@router.get(
+    "/{book_id}/sections", response_model=SectionPage, operation_id="list_api_v1_book_sections", responses=read_errors
+)
+def list_sections(
+    db: Database,
+    response: Response,
+    book: PinnedContent,
+    limit: Annotated[int, Query(ge=1, le=5000)] = 2000,
+    offset: Annotated[int, Query(ge=0, le=2147483647)] = 0,
+) -> SectionPage:
+    response.headers["Cache-Control"] = "no-store"
+    return reads.sections(db, book, limit, offset)
+
+
+@router.get(
+    "/{book_id}/segments", response_model=SegmentPage, operation_id="list_api_v1_book_segments", responses=read_errors
+)
+def list_segments(
+    db: Database,
+    response: Response,
+    book: PinnedContent,
+    limit: Annotated[int, Query(ge=1, le=1000)] = 500,
+    offset: Annotated[int, Query(ge=0, le=2147483647)] = 0,
+) -> SegmentPage:
+    response.headers["Cache-Control"] = "no-store"
+    return reads.segments(db, book, limit, offset)
 
 
 @router.delete(

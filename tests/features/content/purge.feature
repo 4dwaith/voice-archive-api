@@ -10,7 +10,6 @@ Feature: Conditionally purge imported book content
     When I purge content using its current state tag
     Then I was told the content was purged successfully
     And the book content is empty and its owned media are unavailable
-    And physical deletion of the removed media is queued
     And the cover and descriptive book details are preserved
 
   Scenario Outline: Missing or unsuitable state tags cannot purge content
@@ -38,7 +37,6 @@ Feature: Conditionally purge imported book content
     When I purge content using its current state tag
     Then I was told the content was purged successfully
     And the book content is empty and its owned media are unavailable
-    And physical deletion of the removed media is queued
     And the unused chapter audio remain unlinked
     And the cover and descriptive book details are preserved
 

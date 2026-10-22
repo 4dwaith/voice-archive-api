@@ -27,6 +27,7 @@ after code or dependency changes; Compose does not enable hot reload.
 | `/api/v1/files/{kind}` | Upload and prepare a `cover`, `source_pdf`, or `audio_chapter` MP3 |
 | `/api/v1/books/{id}/content-imports` | Atomic canonical import, with optional dry-run |
 | `/api/v1/books/{id}/content` | Content manifest/ETag and conditional PDF/audio/text purge |
+| `/api/v1/books/{id}/sections` and `/segments` | If-Content-Version-pinned reads with integer offset/limit pagination |
 | `/api/v1/files/{id}` | GET/HEAD delivery with native byte ranges; DELETE unlinked files |
 | `/api/v1/health` | Liveness without database access |
 | `/api/v1/ready` | Database readiness; used by Compose |

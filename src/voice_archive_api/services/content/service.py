@@ -7,11 +7,12 @@ from itertools import batched
 from typing import Any
 from uuid import uuid4
 
-from sqlalchemy import insert, text
+from sqlalchemy import func, insert, select, text
 from sqlalchemy.orm import Session
 
 from voice_archive_api.core.errors import ApplicationError
 from voice_archive_api.db.models.content import BookSection, BookSegment
+from voice_archive_api.db.models.file import StoredFile
 from voice_archive_api.logic.content_validation.assets import referenced_file_ids, validate_assets
 from voice_archive_api.logic.content_validation.schemas import ContentInput, SectionInput
 from voice_archive_api.logic.content_validation.validation import (
@@ -22,7 +23,8 @@ from voice_archive_api.logic.content_validation.validation import (
 from voice_archive_api.logic.files import FileKind
 from voice_archive_api.services.book_cleanup import delete_book_content_and_files
 from voice_archive_api.services.books.service import book_write, claim_file, get_book
-from voice_archive_api.services.content.schemas import ContentManifest, ImportResult
+from voice_archive_api.services.content.reads import lock_book
+from voice_archive_api.services.content.schemas import ContentFile, ContentManifest, ImportResult
 from voice_archive_api.services.files import service as files
 
 BATCH_SIZE = 500
@@ -107,9 +109,12 @@ def insert_book_content(book_id: int, section_ids: dict[str, int], content: Cont
     children: dict[str | None, list[SectionInput]] = defaultdict(list)
     for section in content.sections:
         children[section.parent_source_key].append(section)
-    stack = list(children[None])
+    for siblings in children.values():
+        siblings.sort(key=lambda section: section.sibling_sequence)
+    stack = list(reversed(children[None]))
 
     def section_rows() -> Iterator[dict[str, Any]]:
+        sequence = 0
         while stack:
             section = stack.pop()
             yield dict(
@@ -120,8 +125,10 @@ def insert_book_content(book_id: int, section_ids: dict[str, int], content: Cont
                 kind=section.kind,
                 title=section.title,
                 sibling_sequence=section.sibling_sequence,
+                sequence=sequence,
             )
-            stack.extend(children[section.source_key])
+            sequence += 1
+            stack.extend(reversed(children[section.source_key]))
 
     def segment_rows() -> Iterator[dict[str, Any]]:
         for segment in content.segments:
@@ -141,7 +148,7 @@ def insert_book_content(book_id: int, section_ids: dict[str, int], content: Cont
 
 
 def get_manifest_and_etag(db: Session, book_id: int) -> tuple[ContentManifest, str]:
-    book = get_book(db, book_id)
+    book = lock_book(db, book_id)
     state = (
         f"content-{book.content_version}"
         if book.content_version
@@ -158,6 +165,29 @@ def get_manifest_and_etag(db: Session, book_id: int) -> tuple[ContentManifest, s
         schema_version=book.content_schema_version,
         imported_at=book.content_imported_at,
         source_pdf_file_id=book.source_pdf_file_id,
+        section_count=db.scalar(select(func.count()).select_from(BookSection).where(BookSection.book_id == book_id))
+        or 0,
+        segment_count=db.scalar(select(func.count()).select_from(BookSegment).where(BookSegment.book_id == book_id))
+        or 0,
+        files=[
+            ContentFile(
+                id=file.id,
+                kind=file.kind.value,
+                book_id=file.book_id,
+                section_id=file.section_id,
+                byte_size=file.byte_size,
+                metadata=file.file_metadata,
+                url=f"/api/v1/files/{file.id}",
+            )
+            for file in db.scalars(
+                select(StoredFile)
+                .where(
+                    ((StoredFile.book_id == book_id) & (StoredFile.kind == FileKind.SOURCE_PDF))
+                    | StoredFile.section_id.in_(select(BookSection.id).where(BookSection.book_id == book_id))
+                )
+                .order_by(StoredFile.id)
+            )
+        ],
     )
 
     return manifest, etag

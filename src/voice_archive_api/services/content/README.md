@@ -1,9 +1,66 @@
 # Content publication and purge
 
 Phase 09 connects the phase 08 content model/validators to the API. Run existing
-migrations through `0012_content_domain`; this phase adds no migration. The
+migrations through `0013_section_sequence`; the latter backfills section preorder
+without changing existing content versions. The
 [canonical preparation guide](../../logic/content_validation/README.md)
 defines accepted input, HTML, geometry, timing, and resource bounds.
+
+## Read published content
+
+Phase 10 extends the existing `GET /api/v1/books/{id}/content` manifest with
+section/segment counts and PDF/audio file metadata, explicit owners, and relative
+delivery URLs. Cover metadata remains on the book response. No storage keys are
+exposed. The strong content-state ETag continues to authorize conditional purge;
+conditional GET/304 is not implemented for the manifest.
+
+`GET /api/v1/books/{id}/sections?offset=0&limit=2000` returns `content_version`,
+`items`, and nullable integer `next_offset`. Sections are flat, depth-first, parent
+before child, ordered by their persisted `sequence`. Import derives this sequence
+from the parent graph and sibling order, independent of input array order.
+The response includes parent/source keys, sibling sequence, reading sequence,
+owned audio file ID, and the first segment source key in each section's subtree
+(null for empty subtrees). Default limit is 2,000; maximum is 5,000.
+
+`GET /api/v1/books/{id}/segments?offset=0&limit=500` uses the same envelope and
+returns complete HTML/plain text, typed ordered regions, generated physical PDF
+page indexes, language, timing, and passive alignment data. Default limit is 500;
+maximum is 1,000. Both endpoints use SQL `ORDER BY sequence LIMIT ... OFFSET ...`.
+Offsets count rows, so gaps in either collection's sequences are supported.
+Response sizes are bounded by these limits and the existing 32 MB import input
+limit; derived plain text and response metadata can increase encoded size.
+
+Both collections require `If-Content-Version: <UUID>` using the version from the
+manifest. A shared dependency in the content API checks it under the book read
+lock. A purged/unpublished or different version returns **412**
+`content_version_mismatch`; missing or malformed headers and invalid offsets
+return the ordinary **422** validation error. Missing books return **404**
+`book_not_found`. The manifest remains readable without this precondition, so
+clients can discover the current version. Book CRUD, uploads, file delivery,
+and unrelated APIs do not require the header.
+
+Follow `next_offset` until null, retaining the version header on every request.
+No encoded cursors or section/page filters are included. Responses never silently
+substitute a fresh version. Collection responses use `Cache-Control: no-store`;
+Dexie manages offline data. Manifest ETags and purge's `If-Match`/412 contract
+remain separate; 304 means Not Modified and is not used for invalidation.
+
+Each manifest/collection read holds a shared book lock until its database session
+ends. Import, purge, book edits/deletion take the corresponding write lock, so a
+single response's version, rows, and file relationships remain consistent.
+Separate paginated responses do not retain database transactions or snapshots.
+
+Backend gzip middleware compresses eligible structured responses of at least
+500 bytes at level 6 when requested, including `Vary: Accept-Encoding`.
+GET/HEAD file delivery and requests with Range bypass compression. Native
+PDF/audio URLs retain existing Range/If-Range semantics; CORS exposes ETag,
+Accept-Ranges and Content-Range. Send URLs directly to PDF.js/native audio.
+
+Stopping a structured read has no persistent server-side operation to resume.
+Clients can restart safe GET requests, pinning them to the current manifest.
+Mutation replay remains excluded. Apply migration `0013_section_sequence` before serving these reads. It backfills
+existing section order and adds a nonnegative, book-unique sequence constraint;
+no reimport or content-version change is required.
 
 ## Prepare media and publish
 

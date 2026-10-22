@@ -3,13 +3,23 @@
 from datetime import UTC, datetime, timedelta
 from uuid import uuid4
 
+from sqlalchemy import func, select
+
 from voice_archive_api.db.models.content import BookSection, BookSegment
 from voice_archive_api.db.models.file import StoredFile
 from voice_archive_api.logic.files import FileKind
 
 
 def add_section(db, book_id, **test_delta):
-    values = dict(book_id=book_id, source_key="root", kind="chapter", title="Chapter", sibling_sequence=0)
+    previous = db.scalar(select(func.max(BookSection.sequence)).where(BookSection.book_id == book_id))
+    values = dict(
+        book_id=book_id,
+        source_key="root",
+        kind="chapter",
+        title="Chapter",
+        sibling_sequence=0,
+        sequence=0 if previous is None else previous + 1,
+    )
     values.update(test_delta)
     record = BookSection(**values)
     db.add(record)

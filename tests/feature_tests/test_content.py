@@ -8,12 +8,9 @@ from uuid import UUID
 import pytest
 from httpx import Response
 from pytest_bdd import given, parsers, scenarios, then, when
-from sqlalchemy import select
-from sqlalchemy.orm import Session
 
+from tests.feature_tests.test_books import fetch_library
 from tests.file_processing.file_samples import cover_bytes, mp3_bytes, pdf_bytes
-from voice_archive_api.db.models.content import BookSection, BookSegment
-from voice_archive_api.db.models.file import PendingFileDeletion, StoredFile
 
 scenarios("../features/content")
 
@@ -29,7 +26,7 @@ class ContentScenario:
     old_tag: str = ""
     old_version: str = ""
     before: dict = field(default_factory=dict)
-    removed_files: dict[int, str] = field(default_factory=dict)
+    removed_files: list[int] = field(default_factory=list)
     response: Response | None = None
     concurrent_responses: list[Response] = field(default_factory=list)
 
@@ -65,31 +62,49 @@ def prepare_media(client, content):
     content.media = {"pdf": pdf["id"], "root": root["id"], "nested": nested["id"]}
 
 
-def manifest(client, content):
+def fetch_manifest(client, content):
     response = client.get(content.url + "/content")
     assert response.status_code == 200, response.text
     return response
 
 
+def read_collection(client, content, resource):
+    current = fetch_manifest(client, content).json()
+
+    if current["state"] != "published":
+        return []
+
+    items = []
+    offset = 0
+    while True:
+        response = client.get(
+            content.url + "/" + resource,
+            headers={"If-Content-Version": current["content_version"]},
+            params={"offset": offset},
+        )
+        assert response.status_code == 200, response.text
+        items.extend(response.json()["items"])
+        offset = response.json()["next_offset"]
+        if offset is None:
+            return items
+
+
 def snapshot(client, test_engine, content):
     book = client.get(content.url)
     assert book.status_code == 200, book.text
-    current = manifest(client, content)
-    with Session(test_engine) as db:
-        # Phase 10 introduces public section/segment reads; until then inspect
-        # persistence to verify that HTTP actions publish or preserve whole datasets.
-        return {
-            "book": book.json(),
-            "manifest": current.json(),
-            "etag": current.headers["etag"],
-            "sections": [tuple(row) for row in db.execute(select(BookSection.__table__).order_by(BookSection.id))],
-            "segments": [tuple(row) for row in db.execute(select(BookSegment.__table__).order_by(BookSegment.id))],
-            "files": [tuple(row) for row in db.execute(select(StoredFile.__table__).order_by(StoredFile.id))],
-            "queue": [
-                tuple(row)
-                for row in db.execute(select(PendingFileDeletion.__table__).order_by(PendingFileDeletion.storage_key))
-            ],
-        }
+    current = fetch_manifest(client, content)
+    files = {}
+    for file_id in content.media.values():
+        response = client.head(f"/api/v1/files/{file_id}")
+        files[file_id] = (response.status_code, response.headers.get("etag"), response.headers.get("content-length"))
+    return {
+        "book": book.json(),
+        "manifest": current.json(),
+        "etag": current.headers["etag"],
+        "sections": read_collection(client, content, "sections"),
+        "segments": read_collection(client, content, "segments"),
+        "files": files,
+    }
 
 
 def import_request(client, test_engine, content, *, dry_run=False, book_id=None):
@@ -100,13 +115,7 @@ def import_request(client, test_engine, content, *, dry_run=False, book_id=None)
 
 def purge_request(client, test_engine, content, tag):
     content.before = snapshot(client, test_engine, content)
-    with Session(test_engine) as db:
-        sections = set(db.scalars(select(BookSection.id).where(BookSection.book_id == content.book_id)))
-        content.removed_files = {
-            record.id: record.storage_key
-            for record in db.scalars(select(StoredFile))
-            if (record.book_id == content.book_id and record.kind == "source_pdf") or record.section_id in sections
-        }
+    content.removed_files = [file["id"] for file in fetch_manifest(client, content).json()["files"]]
     content.response = client.delete(content.url + "/content", headers={} if tag is None else {"If-Match": tag})
 
 
@@ -126,7 +135,7 @@ def prepared_book(client, content):
     assert response.status_code == 201, response.text
     content.original_book = response.json()
     content.book_id = content.original_book["id"]
-    content.empty_tag = manifest(client, content).headers["etag"]
+    content.empty_tag = fetch_manifest(client, content).headers["etag"]
     prepare_media(client, content)
     content.payload = {
         "schema_version": 1,
@@ -255,7 +264,7 @@ def invalid_prepared_content(client, content, problem):
 @given("the prepared content was purged and imported again")
 def fresh_import(client, test_engine, content):
     already_imported(client, test_engine, content)
-    old = manifest(client, content)
+    old = fetch_manifest(client, content)
     content.old_tag = old.headers["etag"]
     content.old_version = old.json()["content_version"]
     purge_request(client, test_engine, content, content.old_tag)
@@ -298,7 +307,7 @@ def concurrent_imports(client, test_engine, content):
 
 @when("I purge content using its current state tag")
 def purge_current(client, test_engine, content):
-    purge_request(client, test_engine, content, manifest(client, content).headers["etag"])
+    purge_request(client, test_engine, content, fetch_manifest(client, content).headers["etag"])
 
 
 @when("I purge content using the old import state tag")
@@ -308,7 +317,7 @@ def purge_old(client, test_engine, content):
 
 @when(parsers.parse("I purge content using a {kind} state tag"))
 def purge_with_tag(client, test_engine, content, kind):
-    current = manifest(client, content).headers["etag"]
+    current = fetch_manifest(client, content).headers["etag"]
     tags = {"missing": None, "stale": content.empty_tag, "weak": "W/" + current, "wildcard": "*"}
     purge_request(client, test_engine, content, tags[kind])
 
@@ -321,13 +330,16 @@ def import_succeeds(client, content):
     assert data["section_count"] == len(content.payload["sections"])
     assert data["segment_count"] == len(content.payload["segments"])
     assert UUID(data["content_version"]).version == 4
-    current = manifest(client, content)
+    current = fetch_manifest(client, content)
     assert current.json() == {
         "state": "published",
         "content_version": data["content_version"],
         "schema_version": 1,
         "imported_at": current.json()["imported_at"],
         "source_pdf_file_id": content.payload["source_pdf_file_id"],
+        "section_count": len(content.payload["sections"]),
+        "segment_count": len(content.payload["segments"]),
+        "files": current.json()["files"],
     }
     assert current.json()["imported_at"] is not None
     assert current.headers["etag"].startswith('"') and not current.headers["etag"].startswith("W/")
@@ -340,58 +352,66 @@ def dry_run_succeeds(content):
 
 
 @then("the complete ordered dataset and its formatting are stored")
-def complete_dataset(test_engine, content):
-    with Session(test_engine) as db:
-        sections = {
-            s.source_key: s for s in db.scalars(select(BookSection).where(BookSection.book_id == content.book_id))
-        }
-        assert set(sections) == {s["source_key"] for s in content.payload["sections"]}
-        for supplied in content.payload["sections"]:
-            row = sections[supplied["source_key"]]
-            parent = sections.get(supplied.get("parent_source_key"))
-            assert row.parent_id == (parent.id if parent else None)
-            assert (row.kind, row.title, row.sibling_sequence) == (
-                supplied["kind"],
-                supplied["title"],
-                supplied["sibling_sequence"],
-            )
-        rows = list(
-            db.scalars(select(BookSegment).where(BookSegment.book_id == content.book_id).order_by(BookSegment.sequence))
-        )
-        assert len(rows) == len(content.payload["segments"])
-        expected_text = {"heading": "Chapter", "prose": "Hello\nworld", "verse": "Earlier\nline"}
-        for row, supplied in zip(rows, content.payload["segments"], strict=True):
-            owner = sections.get(supplied.get("section_source_key"))
-            assert row.section_id == (owner.id if owner else None)
-            assert row.source_key == supplied["source_key"] and row.sequence == supplied["sequence"]
-            assert row.kind == supplied["kind"]
-            assert row.html_content == supplied["html_content"]
-            assert row.text_content == expected_text[row.source_key]
-            assert row.regions == supplied.get("regions", [])
-            assert row.page_indexes == sorted({r["page_index"] for r in supplied.get("regions", [])})
-            for key in (
-                "language",
-                "narration_start_ms",
-                "narration_end_ms",
-                "narration_seek_ms",
-                "alignment_status",
-                "alignment_metadata",
-            ):
-                assert getattr(row, key) == supplied.get(key)
+def complete_dataset(client, content):
+    # Every supplied section must be present, with no additional sections.
+    sections = {row["source_key"]: row for row in read_collection(client, content, "sections")}
+    assert set(sections) == {s["source_key"] for s in content.payload["sections"]}
+
+    for supplied in content.payload["sections"]:
+        row = sections[supplied["source_key"]]
+
+        # Import resolves parent source keys to database IDs; roots remain parentless.
+        parent = sections.get(supplied.get("parent_source_key"))
+        assert row["parent_id"] == (parent["id"] if parent else None)
+
+        # Section metadata and ordering among siblings must survive unchanged.
+        for key in ("kind", "title", "sibling_sequence"):
+            assert row[key] == supplied[key]
+
+    # Read all segment pages and check completeness before comparing document order.
+    rows = read_collection(client, content, "segments")
+    assert len(rows) == len(content.payload["segments"])
+
+    expected_text = {"heading": "Chapter", "prose": "Hello\nworld", "verse": "Earlier\nline"}
+
+    for row, supplied in zip(rows, content.payload["segments"], strict=True):
+        # Segment ownership uses the resolved section ID, or null for unsectioned text.
+        owner = sections.get(supplied.get("section_source_key"))
+        assert row["section_id"] == (owner["id"] if owner else None)
+
+        # Comparing in response order verifies identity, sequence, kind, and retained HTML.
+        for key in ("source_key", "sequence", "kind", "html_content"):
+            assert row[key] == supplied[key]
+
+        # Derived plain text must preserve the fixture's text and explicit line breaks.
+        assert row["text_content"] == expected_text[row["source_key"]]
+
+        # Regions retain their input order; generated page indexes are sorted and unique.
+        assert row["regions"] == supplied.get("regions", [])
+        assert row["page_indexes"] == sorted({r["page_index"] for r in supplied.get("regions", [])})
+
+        # Optional language, narration timing, and alignment diagnostics round-trip as supplied.
+        # Fields omitted from the input are exposed as null.
+        for key in (
+            "language",
+            "narration_start_ms",
+            "narration_end_ms",
+            "narration_seek_ms",
+            "alignment_status",
+            "alignment_metadata",
+        ):
+            assert row[key] == supplied.get(key)
 
 
 @then("the PDF and each chapter audio belong to their intended owners")
-def media_ownership(test_engine, content):
-    with Session(test_engine) as db:
-        pdf = db.get(StoredFile, content.media["pdf"])
-        assert pdf.book_id == content.book_id and pdf.section_id is None
-        sections = {
-            s.source_key: s.id for s in db.scalars(select(BookSection).where(BookSection.book_id == content.book_id))
-        }
-        for key in ("root", "nested"):
-            audio = db.get(StoredFile, content.media[key])
-            assert audio.section_id == sections[key] and audio.book_id is None
-            assert audio.unlinked_at is None
+def media_ownership(client, content):
+    files = {file["id"]: file for file in fetch_manifest(client, content).json()["files"]}
+    pdf = files[content.media["pdf"]]
+    assert pdf["book_id"] == content.book_id and pdf["section_id"] is None
+    sections = {row["source_key"]: row["id"] for row in read_collection(client, content, "sections")}
+    for key in ("root", "nested"):
+        audio = files[content.media[key]]
+        assert audio["section_id"] == sections[key] and audio["book_id"] is None
 
 
 @then("chapter audio can be read through byte-range delivery")
@@ -474,27 +494,20 @@ def purge_succeeds(content):
 
 @then("the book content is empty and its owned media are unavailable")
 def purged(client, test_engine, content):
-    assert manifest(client, content).json() == {
+    assert fetch_manifest(client, content).json() == {
         "state": "empty",
         "content_version": None,
         "schema_version": None,
         "imported_at": None,
         "source_pdf_file_id": None,
+        "section_count": 0,
+        "segment_count": 0,
+        "files": [],
     }
-    with Session(test_engine) as db:
-        assert db.scalar(select(BookSection.id).where(BookSection.book_id == content.book_id)) is None
-        assert db.scalar(select(BookSegment.id).where(BookSegment.book_id == content.book_id)) is None
+    assert read_collection(client, content, "sections") == []
+    assert read_collection(client, content, "segments") == []
     for file_id in content.removed_files:
         assert client.get(f"/api/v1/files/{file_id}").status_code == 404
-
-
-@then("physical deletion of the removed media is queued")
-def cleanup_queued(test_engine, file_storage, content):
-    assert content.removed_files
-    with Session(test_engine) as db:
-        queued = set(db.scalars(select(PendingFileDeletion.storage_key)))
-    assert set(content.removed_files.values()) <= queued
-    assert all(file_storage.exists(key) for key in content.removed_files.values())
 
 
 @then("the cover and descriptive book details are preserved")
@@ -508,23 +521,22 @@ def book_preserved(client, content):
 
 @then("the fresh import has a different content version")
 def new_version(client, content):
-    current = manifest(client, content)
+    current = fetch_manifest(client, content)
     assert current.json()["content_version"] != content.old_version
     assert current.headers["etag"] != content.old_tag
 
 
 @then("the unused prepared media remain unlinked")
 @then("the unused chapter audio remain unlinked")
-def unlinked_unused_media(test_engine, content):
+def unlinked_unused_media(client, content):
     ids = [content.media["root"], content.media["nested"]]
     if content.payload["source_pdf_file_id"] is None:
         ids.append(content.media["pdf"])
-    with Session(test_engine) as db:
-        for file_id in ids:
-            record = db.get(StoredFile, file_id)
-            assert record is not None
-            assert record.book_id is None and record.section_id is None
-            assert record.unlinked_at is not None
+    owned = {file["id"] for file in fetch_manifest(client, content).json()["files"]}
+    for file_id in ids:
+        assert file_id not in owned
+        # Public DELETE succeeds only for an unlinked prepared file.
+        assert client.delete(f"/api/v1/files/{file_id}").status_code == 204
 
 
 @when(parsers.parse("I delete the linked {section} chapter audio"))

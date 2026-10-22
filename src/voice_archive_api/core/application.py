@@ -8,6 +8,7 @@ from sqlalchemy.orm import Session, sessionmaker
 from starlette.datastructures import State
 from starlette.types import ASGIApp
 
+from voice_archive_api.core.compression import StructuredGZipMiddleware
 from voice_archive_api.core.config import Settings
 
 
@@ -33,13 +34,14 @@ class Application(FastAPI):
     def build_middleware_stack(self) -> ASGIApp:
         # Wrap the complete FastAPI stack, including ServerErrorMiddleware, so
         # the library middleware adds request IDs and CORS headers to 500s too.
-        active_middleware: ASGIApp = CORSMiddleware(
-            super().build_middleware_stack(),
+        active_middleware: ASGIApp = StructuredGZipMiddleware(super().build_middleware_stack())
+        active_middleware = CORSMiddleware(
+            active_middleware,
             allow_origins=list(self.state.settings.cors_origins),
             allow_credentials=True,
             allow_methods=["*"],
             allow_headers=["*"],
-            expose_headers=["X-Request-ID", "ETag"],
+            expose_headers=["X-Request-ID", "ETag", "Accept-Ranges", "Content-Range"],
         )
         active_middleware = CorrelationIdMiddleware(active_middleware)
 
