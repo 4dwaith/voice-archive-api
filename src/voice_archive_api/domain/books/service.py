@@ -8,16 +8,16 @@ from sqlalchemy import func, select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
-from voice_archive_api.book_files import service as file_service
-from voice_archive_api.book_files.model import FileKind, StoredFile
-from voice_archive_api.books.constants import (
+from voice_archive_api.core.errors import ApplicationError
+from voice_archive_api.domain.books.constants import (
     UNIQUE_BOOK_IDENTITY,
 )
-from voice_archive_api.books.model import Book
-from voice_archive_api.books.schemas import BookCreate, BookPatch
-from voice_archive_api.books.validation import normalize_identity
-from voice_archive_api.content.model import BookSection
-from voice_archive_api.core.errors import ApplicationError
+from voice_archive_api.domain.books.model import Book
+from voice_archive_api.domain.books.schemas import BookCreate, BookPatch
+from voice_archive_api.domain.books.validation import normalize_identity
+from voice_archive_api.domain.content.model import BookSection
+from voice_archive_api.domain.files import service as file_service
+from voice_archive_api.domain.files.model import FileKind, StoredFile
 
 
 class BookNotFound(ApplicationError):

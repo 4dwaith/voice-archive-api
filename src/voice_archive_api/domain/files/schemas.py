@@ -3,7 +3,7 @@ from typing import Annotated, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from voice_archive_api.book_files.model import FileKind
+from voice_archive_api.domain.files.model import FileKind
 
 PositiveMetadataInteger = Annotated[int, Field(strict=True, gt=0, le=2_147_483_647)]
 

@@ -10,19 +10,19 @@ from sqlalchemy.orm import Session, sessionmaker
 
 from alembic import command
 from tests.database.content_helpers import add_audio, add_section
-from voice_archive_api.book_files.cleanup import queue_expired_files
-from voice_archive_api.book_files.model import FileCleanupProgress, FileKind, PendingFileDeletion, StoredFile
-from voice_archive_api.book_files.service import (
+from voice_archive_api.domain.books import service as book_service
+from voice_archive_api.domain.books.model import Book
+from voice_archive_api.domain.books.schemas import BookCreate
+from voice_archive_api.domain.content.model import BookSection
+from voice_archive_api.domain.files.cleanup import queue_expired_files
+from voice_archive_api.domain.files.model import FileCleanupProgress, FileKind, PendingFileDeletion, StoredFile
+from voice_archive_api.domain.files.service import (
     FileAlreadyLinked,
     FileKindMismatch,
     FileNotFound,
     claim_section_audio,
     delete_file,
 )
-from voice_archive_api.books import service as book_service
-from voice_archive_api.books.model import Book
-from voice_archive_api.books.schemas import BookCreate
-from voice_archive_api.content.model import BookSection
 
 
 def add_book(db, title="Owner"):

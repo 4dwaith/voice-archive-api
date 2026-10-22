@@ -6,10 +6,10 @@ from types import MappingProxyType
 from sqlalchemy import select, update
 from sqlalchemy.orm import Session
 
-from voice_archive_api.book_files.covers import prepare_cover
-from voice_archive_api.book_files.model import FileKind, FileStrategy, PendingFileDeletion, PreparedAsset, StoredFile
-from voice_archive_api.book_files.pdfs import prepare_pdf
 from voice_archive_api.core.errors import ApplicationError
+from voice_archive_api.domain.files.covers import prepare_cover
+from voice_archive_api.domain.files.model import FileKind, FileStrategy, PendingFileDeletion, PreparedAsset, StoredFile
+from voice_archive_api.domain.files.pdfs import prepare_pdf
 from voice_archive_api.file_handling import BinarySource, Storage
 
 FILE_STRATEGIES = {

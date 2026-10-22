@@ -4,12 +4,12 @@ from typing import Annotated
 from pydantic import AfterValidator, BaseModel, ConfigDict, Field, computed_field
 from pydantic.experimental.missing_sentinel import MISSING
 
-from voice_archive_api.books.constants import (
+from voice_archive_api.domain.books.constants import (
     AUTHOR_LIMIT,
     DESCRIPTION_LIMIT,
     TITLE_LIMIT,
 )
-from voice_archive_api.books.validation import (
+from voice_archive_api.domain.books.validation import (
     validate_author,
     validate_language,
     validate_text,

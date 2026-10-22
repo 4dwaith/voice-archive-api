@@ -3,7 +3,7 @@ import json
 import pytest
 from pydantic import ValidationError
 
-from voice_archive_api.books.schemas import BookCreate, BookPatch
+from voice_archive_api.domain.books.schemas import BookCreate, BookPatch
 
 from .helpers import assert_operation_contract, assert_request_body_contract
 

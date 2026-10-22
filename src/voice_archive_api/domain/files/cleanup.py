@@ -8,8 +8,8 @@ from itertools import islice
 from sqlalchemy import exists, select, tuple_
 from sqlalchemy.orm import Session, sessionmaker
 
-from voice_archive_api.book_files.model import FileCleanupProgress, PendingFileDeletion, StoredFile
-from voice_archive_api.book_files.service import queue_file_deletion
+from voice_archive_api.domain.files.model import FileCleanupProgress, PendingFileDeletion, StoredFile
+from voice_archive_api.domain.files.service import queue_file_deletion
 from voice_archive_api.file_handling import Storage
 
 logger = logging.getLogger(__name__)

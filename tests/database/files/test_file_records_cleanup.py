@@ -8,14 +8,14 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, sessionmaker
 
 from alembic import command
-from tests.database.book_files.test_file_ownership import add_book
 from tests.database.content_helpers import add_audio, add_section
+from tests.database.files.test_file_ownership import add_book
 from tests.file_processing.file_samples import cover_bytes, pdf_bytes
-from voice_archive_api.book_files import cleanup, service
-from voice_archive_api.book_files.model import FileCleanupProgress, FileKind, PendingFileDeletion, StoredFile
-from voice_archive_api.books import service as book_service
-from voice_archive_api.books.model import Book
-from voice_archive_api.books.schemas import BookCreate, BookPatch
+from voice_archive_api.domain.books import service as book_service
+from voice_archive_api.domain.books.model import Book
+from voice_archive_api.domain.books.schemas import BookCreate, BookPatch
+from voice_archive_api.domain.files import cleanup, service
+from voice_archive_api.domain.files.model import FileCleanupProgress, FileKind, PendingFileDeletion, StoredFile
 from voice_archive_api.file_handling import LocalStorage
 
 # Freeze the time to this point - all files and rows prepared will be relative to this point

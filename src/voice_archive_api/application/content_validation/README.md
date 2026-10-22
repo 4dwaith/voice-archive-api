@@ -118,7 +118,7 @@ from functools import partial
 
 from voice_archive_api.application.content_validation.validation import validate_content
 from voice_archive_api.application.content_validation.assets import validate_referenced_assets
-from voice_archive_api.book_files.service import get_prepared_assets
+from voice_archive_api.domain.files.service import get_prepared_assets
 
 # Wire the session at the calling boundary, not inside application validation.
 lookup = partial(get_prepared_assets, db)

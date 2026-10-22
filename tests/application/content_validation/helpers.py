@@ -3,7 +3,7 @@
 import json
 from importlib.resources import files
 
-from voice_archive_api.book_files.model import FileKind, PreparedAsset
+from voice_archive_api.domain.files.model import FileKind, PreparedAsset
 
 DOCUMENTS = files("voice_archive_api.application.content_validation").joinpath("docs")
 EXAMPLE = DOCUMENTS.joinpath("example.v1.json")

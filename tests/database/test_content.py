@@ -6,11 +6,11 @@ from sqlalchemy import select, text, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
-from tests.database.book_files.test_file_ownership import add_book, add_file
 from tests.database.content_helpers import add_audio, add_section, add_segment
-from voice_archive_api.book_files.model import PendingFileDeletion, StoredFile
-from voice_archive_api.books.service import delete_book
-from voice_archive_api.content.model import BookSection, BookSegment, SectionKind, SegmentKind
+from tests.database.files.test_file_ownership import add_book, add_file
+from voice_archive_api.domain.books.service import delete_book
+from voice_archive_api.domain.content.model import BookSection, BookSegment, SectionKind, SegmentKind
+from voice_archive_api.domain.files.model import PendingFileDeletion, StoredFile
 
 
 def test_content_roundtrip_and_auto_generated_pages(test_engine):

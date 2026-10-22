@@ -223,10 +223,13 @@ Credentials stay in the ignored environment files, outside the saved configurati
 
 ## Code and migrations
 
-Under [src/voice_archive_api](src/voice_archive_api/), `books/` and `book_files/`
-contain domain models and services. `application/` groups broader capabilities;
+Under [src/voice_archive_api](src/voice_archive_api/), `domain/` groups related
+models and services into `books/`, `content/`, and `files/`. These services
+own database access for their capabilities. `application/` groups broader capabilities;
 its `content_validation/` module owns prepared-content validation and its guide,
-JSON Schema, and example. Tests for that capability live in `tests/application/`.
+JSON Schema, and example. Each application module keeps one README alongside its
+implementation and obtains persisted data through domain services. Its tests
+mirror the module name under `tests/application/`.
 `file_handling/` provides storage and delivery;
 `api/` defines HTTP contracts; `core/` and `db/` provide configuration, dependencies,
 and database resources. `main.py` wires the application together.

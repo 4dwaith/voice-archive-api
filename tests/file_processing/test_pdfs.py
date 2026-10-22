@@ -7,7 +7,7 @@ from PIL import Image
 from pypdf import PdfWriter
 from pypdf.errors import DependencyError
 
-from voice_archive_api.book_files.pdfs import EncryptedPdfNotSupported, InvalidPdf, prepare_pdf
+from voice_archive_api.domain.files.pdfs import EncryptedPdfNotSupported, InvalidPdf, prepare_pdf
 from voice_archive_api.file_handling import FileTooLarge, LocalStorage
 
 
@@ -97,7 +97,7 @@ def test_encrypted_pdfs_are_rejected_even_with_an_empty_password(storage, passwo
 def test_missing_crypto_support_is_a_rejected_encrypted_pdf(storage):
     # Reader initialization can raise this before exposing is_encrypted.
     with (
-        patch("voice_archive_api.book_files.pdfs.PdfReader", side_effect=DependencyError("crypto unavailable")),
+        patch("voice_archive_api.domain.files.pdfs.PdfReader", side_effect=DependencyError("crypto unavailable")),
         pytest.raises(EncryptedPdfNotSupported),
     ):
         prepare_pdf(BytesIO(pdf_bytes()), storage, max_bytes=100_000)

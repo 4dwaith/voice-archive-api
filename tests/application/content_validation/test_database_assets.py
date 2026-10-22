@@ -5,12 +5,12 @@ from functools import partial
 import pytest
 from sqlalchemy.orm import Session
 
-from tests.database.book_files.test_file_ownership import add_book, add_file
 from tests.database.content_helpers import add_audio, add_section
+from tests.database.files.test_file_ownership import add_book, add_file
 from voice_archive_api.application.content_validation.assets import validate_referenced_assets
 from voice_archive_api.application.content_validation.validation import ContentValidationError, validate_content
-from voice_archive_api.book_files.model import FileKind
-from voice_archive_api.book_files.service import get_prepared_assets
+from voice_archive_api.domain.files.model import FileKind
+from voice_archive_api.domain.files.service import get_prepared_assets
 
 
 @pytest.fixture

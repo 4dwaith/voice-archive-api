@@ -9,8 +9,8 @@ import pytest
 from sqlalchemy import event
 from sqlalchemy.orm import sessionmaker
 
-from voice_archive_api.book_files import cleanup
-from voice_archive_api.book_files.model import FileKind, StoredFile
+from voice_archive_api.domain.files import cleanup
+from voice_archive_api.domain.files.model import FileKind, StoredFile
 from voice_archive_api.file_handling import LocalStorage
 
 NOW = datetime(2026, 10, 21, tzinfo=UTC)

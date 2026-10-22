@@ -7,11 +7,11 @@ from sqlalchemy import delete, func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
-from voice_archive_api.book_files import service as file_service
-from voice_archive_api.book_files.model import FileKind, StoredFile
-from voice_archive_api.books import service
-from voice_archive_api.books.model import Book
-from voice_archive_api.books.schemas import BookCreate, BookPatch
+from voice_archive_api.domain.books import service
+from voice_archive_api.domain.books.model import Book
+from voice_archive_api.domain.books.schemas import BookCreate, BookPatch
+from voice_archive_api.domain.files import service as file_service
+from voice_archive_api.domain.files.model import FileKind, StoredFile
 
 
 @pytest.fixture

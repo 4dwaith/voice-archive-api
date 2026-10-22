@@ -11,7 +11,7 @@ from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from tests.file_processing.file_samples import cover_bytes, pdf_bytes, pdf_bytes_of_size
-from voice_archive_api.book_files.model import PendingFileDeletion, StoredFile
+from voice_archive_api.domain.files.model import PendingFileDeletion, StoredFile
 
 scenarios("../features/book_files")
 

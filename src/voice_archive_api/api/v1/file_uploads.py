@@ -11,10 +11,10 @@ from starlette.exceptions import HTTPException
 from starlette.types import Message
 
 from voice_archive_api.api.errors import ErrorResponse
-from voice_archive_api.book_files.model import FileKind
-from voice_archive_api.book_files.service import FILE_STRATEGIES
 from voice_archive_api.core.dependencies import get_app_settings
 from voice_archive_api.core.errors import ApplicationError
+from voice_archive_api.domain.files.model import FileKind
+from voice_archive_api.domain.files.service import FILE_STRATEGIES
 from voice_archive_api.file_handling import FileTooLarge
 
 MULTIPART_OVERHEAD_BYTES = 64 * 1024

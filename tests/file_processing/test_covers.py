@@ -5,7 +5,7 @@ from unittest.mock import patch
 import pytest
 from PIL import Image
 
-from voice_archive_api.book_files.covers import InvalidImage, UnsupportedMediaType, prepare_cover
+from voice_archive_api.domain.files.covers import InvalidImage, UnsupportedMediaType, prepare_cover
 from voice_archive_api.file_handling import FileTooLarge, LocalStorage
 
 

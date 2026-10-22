@@ -5,7 +5,7 @@ import pytest
 from tests.application.content_validation.helpers import example, prepared
 from voice_archive_api.application.content_validation.assets import validate_assets
 from voice_archive_api.application.content_validation.validation import ContentValidationError, validate_content
-from voice_archive_api.book_files.model import FileKind, PreparedAsset
+from voice_archive_api.domain.files.model import FileKind, PreparedAsset
 
 
 @pytest.mark.parametrize(

@@ -6,8 +6,8 @@ from typing import Annotated, Literal, Self
 from pydantic import BaseModel, ConfigDict, Field, JsonValue, PrivateAttr, field_validator, model_validator
 
 from voice_archive_api.application.content_validation.html import MAX_HTML_BYTES, parse_fragment
-from voice_archive_api.books.validation import validate_language, validate_text, validate_title
-from voice_archive_api.content.model import SectionKind, SegmentKind
+from voice_archive_api.domain.books.validation import validate_language, validate_text, validate_title
+from voice_archive_api.domain.content.model import SectionKind, SegmentKind
 
 MAX_SECTIONS = 50_000
 MAX_SEGMENTS = 100_000

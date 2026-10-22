@@ -5,12 +5,12 @@ from sqlalchemy.orm import Session
 
 from voice_archive_api.api.errors import ErrorResponse, ValidationErrorResponse
 from voice_archive_api.api.v1.file_uploads import FileUploadErrorResponse, UploadRoute
-from voice_archive_api.book_files import service
-from voice_archive_api.book_files.model import FileKind, StoredFile
-from voice_archive_api.book_files.schemas import FileResponse
-from voice_archive_api.book_files.service import FILE_STRATEGIES
 from voice_archive_api.core.dependencies import AppSettings, Delivery, FileStorage
 from voice_archive_api.db.session import get_db
+from voice_archive_api.domain.files import service
+from voice_archive_api.domain.files.model import FileKind, StoredFile
+from voice_archive_api.domain.files.schemas import FileResponse
+from voice_archive_api.domain.files.service import FILE_STRATEGIES
 from voice_archive_api.file_handling.file_delivery import delivery_parameters, delivery_responses
 
 type FileErrorCode = Literal[

@@ -16,14 +16,14 @@ from sqlalchemy import (
 )
 from sqlalchemy.orm import Mapped, column_property, mapped_column
 
-from voice_archive_api.book_files.model import FileKind, StoredFile
-from voice_archive_api.books.constants import (
+from voice_archive_api.db.base import Base
+from voice_archive_api.domain.books.constants import (
     AUTHOR_LIMIT,
     DESCRIPTION_LIMIT,
     TITLE_LIMIT,
     UNIQUE_BOOK_IDENTITY,
 )
-from voice_archive_api.db.base import Base
+from voice_archive_api.domain.files.model import FileKind, StoredFile
 
 
 class Book(Base):

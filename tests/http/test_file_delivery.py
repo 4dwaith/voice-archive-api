@@ -6,12 +6,12 @@ from unittest.mock import Mock
 import pytest
 from fastapi.responses import FileResponse
 
-from tests.database.book_files.test_file_ownership import add_book
 from tests.database.content_helpers import add_audio, add_section
-from voice_archive_api.book_files import service
-from voice_archive_api.book_files.model import FileKind
+from tests.database.files.test_file_ownership import add_book
 from voice_archive_api.core.dependencies import get_file_delivery
 from voice_archive_api.db.session import get_db
+from voice_archive_api.domain.files import service
+from voice_archive_api.domain.files.model import FileKind
 from voice_archive_api.file_handling import LocalStorage
 from voice_archive_api.file_handling.local_file_delivery import LocalFileDelivery
 
@@ -72,7 +72,7 @@ def test_section_file_http_delete_guard_and_audio_upload_is_deferred(client, app
 def test_audio_registry_delivery_and_deferred_preparer(client, application, file_storage):
     from io import BytesIO
 
-    from voice_archive_api.book_files.service import create_file
+    from voice_archive_api.domain.files.service import create_file
 
     data = b"synthetic stored bytes; MP3 preparation belongs to phase 09"
     key = file_storage.promote(file_storage.put_temporary(BytesIO(data), max_bytes=1000))

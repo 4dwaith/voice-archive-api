@@ -4,7 +4,7 @@ from unittest.mock import Mock
 import pytest
 
 from voice_archive_api import maintenance
-from voice_archive_api.book_files.cleanup import CleanupResult
+from voice_archive_api.domain.files.cleanup import CleanupResult
 
 
 def test_cleanup_schedule_runs_on_startup_and_at_midnight_utc():

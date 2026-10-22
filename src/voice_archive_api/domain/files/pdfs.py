@@ -3,8 +3,8 @@ from typing import BinaryIO
 from pypdf import PdfReader
 from pypdf.errors import DependencyError, PyPdfError
 
-from voice_archive_api.book_files.model import PreparedFile
 from voice_archive_api.core.errors import ApplicationError
+from voice_archive_api.domain.files.model import PreparedFile
 from voice_archive_api.file_handling import BinarySource, Storage
 
 

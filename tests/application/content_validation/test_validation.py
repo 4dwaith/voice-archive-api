@@ -8,7 +8,7 @@ from tests.application.content_validation.helpers import EXAMPLE, example, mutat
 from voice_archive_api.application.content_validation.assets import validate_assets
 from voice_archive_api.application.content_validation.schemas import ContentInput
 from voice_archive_api.application.content_validation.validation import ContentValidationError, validate_content
-from voice_archive_api.content.model import SectionKind, SegmentKind
+from voice_archive_api.domain.content.model import SectionKind, SegmentKind
 
 
 def test_complete_example_and_backward_root_audio():

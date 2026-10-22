@@ -20,8 +20,8 @@ from sqlalchemy import (
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column
 
-from voice_archive_api.book_files.constants import UNIQUE_FILE_BOOK_KIND
 from voice_archive_api.db.base import Base
+from voice_archive_api.domain.files.constants import UNIQUE_FILE_BOOK_KIND
 from voice_archive_api.file_handling import BinarySource, Storage
 
 

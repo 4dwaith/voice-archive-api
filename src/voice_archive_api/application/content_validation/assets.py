@@ -8,7 +8,7 @@ from voice_archive_api.application.content_validation.validation import (
     ContentValidationError,
     ValidatedContent,
 )
-from voice_archive_api.book_files.model import FileKind, PreparedAsset
+from voice_archive_api.domain.files.model import FileKind, PreparedAsset
 
 type PreparedAssetLookup = Callable[[Collection[int]], Mapping[int, PreparedAsset]]
 

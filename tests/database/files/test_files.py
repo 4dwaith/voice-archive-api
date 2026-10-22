@@ -11,11 +11,11 @@ from sqlalchemy.orm import Session
 from alembic import command
 from tests.database.content_helpers import add_audio
 from tests.file_processing.file_samples import cover_bytes, pdf_bytes
-from voice_archive_api.book_files import service
-from voice_archive_api.book_files.covers import InvalidImage
-from voice_archive_api.book_files.model import FileKind, PendingFileDeletion, StoredFile
-from voice_archive_api.book_files.pdfs import InvalidPdf
-from voice_archive_api.books.model import Book
+from voice_archive_api.domain.books.model import Book
+from voice_archive_api.domain.files import service
+from voice_archive_api.domain.files.covers import InvalidImage
+from voice_archive_api.domain.files.model import FileKind, PendingFileDeletion, StoredFile
+from voice_archive_api.domain.files.pdfs import InvalidPdf
 from voice_archive_api.file_handling import LocalStorage
 
 FIRST_BOOK_FILES_REVISION = "0004_book_files"
@@ -293,8 +293,8 @@ def test_prepared_asset_lookup_skips_database_for_empty_ids():
 
 
 def test_prepared_asset_lookup_returns_detached_snapshots_in_one_query(test_engine):
-    from tests.database.book_files.test_file_ownership import add_book
     from tests.database.content_helpers import add_section
+    from tests.database.files.test_file_ownership import add_book
 
     statements = []
 
