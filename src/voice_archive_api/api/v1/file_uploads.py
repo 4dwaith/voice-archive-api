@@ -44,6 +44,8 @@ class UploadRoute(APIRoute):
             raw_kind = request.path_params["kind"]
             try:
                 kind = FileKind(raw_kind)
+                if FILE_STRATEGIES[kind].prepare is None:
+                    raise ValueError("File kind preparation is not available")
             except ValueError as exc:
                 raise RequestValidationError(
                     [
@@ -52,11 +54,16 @@ class UploadRoute(APIRoute):
                             "loc": ("path", "kind"),
                             "input": raw_kind,
                             "msg": "Unsupported file kind",
-                            "ctx": {"expected": ", ".join(FileKind)},
+                            "ctx": {
+                                "expected": ", ".join(
+                                    kind for kind, strategy in FILE_STRATEGIES.items() if strategy.prepare is not None
+                                )
+                            },
                         }
                     ]
                 ) from exc
             strategy = FILE_STRATEGIES[kind]
+            assert strategy.limit_setting_key is not None
             file_size_limit = getattr(settings, strategy.limit_setting_key) + MULTIPART_OVERHEAD_BYTES
 
             if settings.upload_max_bytes is not None:

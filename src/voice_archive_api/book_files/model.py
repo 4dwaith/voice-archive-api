@@ -1,3 +1,4 @@
+from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import datetime
 from enum import StrEnum
@@ -27,6 +28,18 @@ from voice_archive_api.file_handling import BinarySource, Storage
 class FileKind(StrEnum):
     COVER = "cover"
     SOURCE_PDF = "source_pdf"
+    AUDIO_CHAPTER = "audio_chapter"
+
+
+@dataclass(frozen=True)
+class PreparedAsset:
+    """Prepared-file information for callers that do not need an ORM record."""
+
+    id: int
+    kind: FileKind
+    book_id: int | None
+    section_id: int | None
+    metadata: Mapping[str, int | str]
 
 
 def positive_metadata_integer(field: str) -> str:
@@ -51,8 +64,8 @@ class Preparer(Protocol):
 
 @dataclass(frozen=True)
 class FileStrategy:
-    prepare: Preparer
-    limit_setting_key: str
+    prepare: Preparer | None
+    limit_setting_key: str | None
     media_type: str
     filename: str
 
@@ -64,7 +77,12 @@ class StoredFile(Base):
     __table_args__ = (
         Index("ix_files_unlinked_at_id", "unlinked_at", "id"),
         UniqueConstraint("book_id", "kind", name=UNIQUE_FILE_BOOK_KIND),
-        CheckConstraint("(book_id IS NULL) = (unlinked_at IS NOT NULL)", name="ownership_timestamp"),
+        UniqueConstraint("section_id", "kind", name="uq_files_section_kind"),
+        CheckConstraint("book_id IS NULL OR section_id IS NULL", name="exclusive_owner"),
+        CheckConstraint(
+            "(book_id IS NULL AND section_id IS NULL) = (unlinked_at IS NOT NULL)", name="ownership_timestamp"
+        ),
+        CheckConstraint("section_id IS NULL OR kind = 'audio_chapter'", name="section_kind"),
         CheckConstraint("book_id IS NULL OR kind IN ('cover', 'source_pdf')", name="book_kind"),
         CheckConstraint(
             f"kind <> 'cover' OR ({positive_metadata_integer('width')} AND {positive_metadata_integer('height')})",
@@ -103,6 +121,7 @@ class StoredFile(Base):
     file_metadata: Mapped[dict[str, int | str]] = mapped_column("metadata", JSONB)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
     book_id: Mapped[int | None] = mapped_column(BigInteger, ForeignKey("books.id", ondelete="SET NULL"))
+    section_id: Mapped[int | None] = mapped_column(BigInteger, ForeignKey("sections.id", ondelete="SET NULL"))
     unlinked_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), server_default=FetchedValue(), server_onupdate=FetchedValue()
     )

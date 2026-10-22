@@ -16,6 +16,7 @@ from voice_archive_api.books.constants import (
 from voice_archive_api.books.model import Book
 from voice_archive_api.books.schemas import BookCreate, BookPatch
 from voice_archive_api.books.validation import normalize_identity
+from voice_archive_api.content.model import BookSection
 from voice_archive_api.core.errors import ApplicationError
 
 
@@ -84,7 +85,12 @@ def claim_file(db: Session, file_id: int, *, book_id: int, kind: FileKind) -> No
     """Claim only an unowned file, checking the current row after concurrent writes."""
     claimed = db.scalar(
         update(StoredFile)
-        .where(StoredFile.id == file_id, StoredFile.book_id.is_(None), StoredFile.kind == kind)
+        .where(
+            StoredFile.id == file_id,
+            StoredFile.book_id.is_(None),
+            StoredFile.section_id.is_(None),
+            StoredFile.kind == kind,
+        )
         .values(book_id=book_id)
         .returning(StoredFile.id)
         .execution_options(synchronize_session=False)
@@ -175,7 +181,10 @@ def delete_book(db: Session, book_id: int) -> bool:
         records = list(
             db.scalars(
                 select(StoredFile)
-                .where(StoredFile.book_id == book_id)
+                .where(
+                    (StoredFile.book_id == book_id)
+                    | StoredFile.section_id.in_(select(BookSection.id).where(BookSection.book_id == book_id))
+                )
                 .with_for_update()
                 .execution_options(populate_existing=True)
             )
@@ -183,6 +192,7 @@ def delete_book(db: Session, book_id: int) -> bool:
         now = datetime.now(UTC)
         for record in records:
             record.book_id = None
+            record.section_id = None
         # Flush detachment separately so DELETE triggers see the unlinked rows.
         db.flush()
         for record in records:

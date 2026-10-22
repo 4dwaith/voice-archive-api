@@ -5,9 +5,11 @@ from unittest.mock import Mock
 import pytest
 from sqlalchemy import event, update
 from sqlalchemy.exc import IntegrityError
-from sqlalchemy.orm import sessionmaker
+from sqlalchemy.orm import Session, sessionmaker
 
 from alembic import command
+from tests.database.book_files.test_file_ownership import add_book
+from tests.database.content_helpers import add_audio, add_section
 from tests.file_processing.file_samples import cover_bytes, pdf_bytes
 from voice_archive_api.book_files import cleanup, service
 from voice_archive_api.book_files.model import FileCleanupProgress, FileKind, PendingFileDeletion, StoredFile
@@ -308,3 +310,18 @@ def test_progress_migration_starts_with_null_boundaries_and_preserves_files(
         assert progress.cleanup_before is None
         assert db.get(StoredFile, record.id).storage_key == record.storage_key
     assert storage.exists(record.storage_key)
+
+
+def test_expiration_ignores_section_owned_audio_and_queues_unlinked(test_engine):
+    with Session(test_engine) as db:
+        root = add_section(db, add_book(db).id)
+        linked = add_audio(db, section_id=root.id)
+        unlinked = add_audio(db)
+        linked_id, unlinked_id = linked.id, unlinked.id
+        unlinked_key = unlinked.storage_key
+        db.commit()
+    assert cleanup.queue_expired_files(sessionmaker(test_engine), datetime.now(UTC)) == 1
+    with Session(test_engine) as db:
+        assert db.get(StoredFile, linked_id) is not None
+        assert db.get(StoredFile, unlinked_id) is None
+        assert db.get(PendingFileDeletion, unlinked_key) is not None

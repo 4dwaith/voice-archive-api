@@ -13,6 +13,7 @@ dependencies = [
     "apscheduler>=3.11,<4",
     "asgi-correlation-id>=4.3,<5",
     "fastapi>=0.119,<1",
+    "html5lib>=1.1,<2",
     "langcodes>=3.5,<4",
     "pillow>=12,<14",
     "psycopg[binary]>=3.3,<4",

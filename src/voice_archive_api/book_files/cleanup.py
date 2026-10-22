@@ -29,7 +29,7 @@ def queue_expired_files(factory: sessionmaker[Session], now: datetime) -> int:
     """Scan indexed age windows, retaining one day of overlap for late commits."""
     total = 0
     cutoff = now - UNLINKED_RETENTION
-    conditions = [StoredFile.unlinked_at < cutoff, StoredFile.book_id.is_(None)]
+    conditions = [StoredFile.unlinked_at < cutoff, StoredFile.book_id.is_(None), StoredFile.section_id.is_(None)]
     with factory() as db:
         progress = db.get(FileCleanupProgress, 1)
         assert progress is not None

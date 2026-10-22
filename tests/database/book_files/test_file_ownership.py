@@ -1,6 +1,7 @@
 """Ownership invariants and timestamp lifecycle independent of service writes."""
 
 from datetime import UTC, datetime, timedelta
+from uuid import uuid4
 
 import pytest
 from sqlalchemy import delete, select, text, update
@@ -8,11 +9,20 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, sessionmaker
 
 from alembic import command
+from tests.database.content_helpers import add_audio, add_section
 from voice_archive_api.book_files.cleanup import queue_expired_files
 from voice_archive_api.book_files.model import FileCleanupProgress, FileKind, PendingFileDeletion, StoredFile
+from voice_archive_api.book_files.service import (
+    FileAlreadyLinked,
+    FileKindMismatch,
+    FileNotFound,
+    claim_section_audio,
+    delete_file,
+)
 from voice_archive_api.books import service as book_service
 from voice_archive_api.books.model import Book
 from voice_archive_api.books.schemas import BookCreate
+from voice_archive_api.content.model import BookSection
 
 
 def add_book(db, title="Owner"):
@@ -210,3 +220,86 @@ def test_ownership_migration_refuses_wrong_kind_without_losing_legacy_links(test
     with test_engine.connect() as connection:
         assert connection.scalar(text(f"SELECT {field} FROM books")) == file_id
         assert connection.scalar(text("SELECT version_num FROM alembic_version")) == "0008_unified_files"
+
+
+@pytest.mark.parametrize(
+    "kind, has_book_owner, has_section_owner, metadata",
+    [
+        pytest.param(FileKind.AUDIO_CHAPTER, True, False, {"duration_ms": 1000}, id="audio-owned-by-book"),
+        pytest.param(FileKind.AUDIO_CHAPTER, True, True, {"duration_ms": 1000}, id="both-owners"),
+        pytest.param(FileKind.COVER, False, True, {"width": 1, "height": 1}, id="cover-owned-by-section"),
+        pytest.param(FileKind.SOURCE_PDF, False, True, {"page_count": 1}, id="pdf-owned-by-section"),
+    ],
+)
+def test_forbidden_file_owners(test_engine, kind, has_book_owner, has_section_owner, metadata):
+    with Session(test_engine) as db:
+        book = add_book(db)
+        root = add_section(db, book.id)
+        # Valid kind-specific metadata ensures rejection is caused by ownership.
+        record = StoredFile(
+            kind=kind,
+            book_id=book.id if has_book_owner else None,
+            section_id=root.id if has_section_owner else None,
+            file_metadata=metadata,
+            storage_key=str(uuid4()),
+            byte_size=1,
+            created_at=datetime.now(UTC),
+        )
+        with pytest.raises(IntegrityError):
+            db.add(record)
+            db.flush()
+
+
+def test_nested_audio_timestamp_lifecycle_and_unique_owner(test_engine):
+    with Session(test_engine) as db:
+        root = add_section(db, add_book(db).id)
+        nested = add_section(db, root.book_id, source_key="nested", parent_id=root.id)
+        one, two = add_audio(db, section_id=root.id), add_audio(db)
+        db.refresh(one)
+        db.refresh(two)
+        assert one.unlinked_at is None
+        assert two.unlinked_at == two.created_at
+        claim_section_audio(db, two.id, section_id=nested.id)
+        db.refresh(two)
+        assert two.unlinked_at is None
+        with db.begin_nested(), pytest.raises(FileAlreadyLinked):
+            claim_section_audio(db, two.id, section_id=root.id)
+        with pytest.raises(IntegrityError), db.begin_nested():
+            add_audio(db, section_id=nested.id)
+        db.execute(update(StoredFile).where(StoredFile.id == two.id).values(section_id=None))
+        db.refresh(two)
+        assert two.unlinked_at > two.created_at
+        # Deleting sections directly detaches audio through ON DELETE SET NULL.
+        db.execute(delete(BookSection).where(BookSection.id == nested.id))
+        db.execute(delete(BookSection).where(BookSection.id == root.id))
+        db.refresh(one)
+        assert one.section_id is None and one.unlinked_at > one.created_at
+
+
+def test_section_audio_cannot_be_claimed_by_book(test_engine):
+    with Session(test_engine) as db:
+        book = add_book(db)
+        root = add_section(db, book.id)
+        record = add_audio(db, section_id=root.id)
+        with pytest.raises(FileAlreadyLinked):
+            book_service.claim_file(db, record.id, book_id=book.id, kind=FileKind.AUDIO_CHAPTER)
+
+
+def test_section_audio_delete_guards_and_claim_errors(test_engine):
+    with Session(test_engine) as db:
+        book = add_book(db)
+        root = add_section(db, book.id)
+        nested = add_section(db, book.id, source_key="nested", parent_id=root.id)
+        record = add_audio(db, section_id=nested.id)
+        file_id = record.id
+        cover = add_file(db, book_id=book.id)
+        cover_id = cover.id
+        db.commit()
+        with pytest.raises(FileAlreadyLinked):
+            delete_file(db, file_id)
+        with pytest.raises(IntegrityError), db.begin_nested():
+            db.execute(delete(StoredFile).where(StoredFile.id == file_id))
+        with pytest.raises(FileKindMismatch):
+            claim_section_audio(db, cover_id, section_id=root.id)
+        with pytest.raises(FileNotFound):
+            claim_section_audio(db, 999999, section_id=root.id)

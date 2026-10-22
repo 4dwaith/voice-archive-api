@@ -131,6 +131,7 @@ file storage. Coverage is printed in the terminal.
 
 - [Features](tests/features/) and [step implementations](tests/feature_tests/): executable behavior specifications.
 - [Contracts](tests/contract/): request/response schemas and OpenAPI declarations.
+- [Application](tests/application/): capability rules and integrations, including prepared-content validation.
 - [Database](tests/database/): constraints, transactions, concurrency, and migrations.
 - [File processing](tests/file_processing/) and [HTTP](tests/http/): file preparation/storage and request handling.
 
@@ -223,7 +224,10 @@ Credentials stay in the ignored environment files, outside the saved configurati
 ## Code and migrations
 
 Under [src/voice_archive_api](src/voice_archive_api/), `books/` and `book_files/`
-contain domain models and services; `file_handling/` provides storage and delivery;
+contain domain models and services. `application/` groups broader capabilities;
+its `content_validation/` module owns prepared-content validation and its guide,
+JSON Schema, and example. Tests for that capability live in `tests/application/`.
+`file_handling/` provides storage and delivery;
 `api/` defines HTTP contracts; `core/` and `db/` provide configuration, dependencies,
 and database resources. `main.py` wires the application together.
 
@@ -255,3 +259,15 @@ uv run --env-file .env alembic revision --autogenerate -m "describe the schema c
 
 The migration role needs permission to install PostgreSQL's bundled `pgcrypto`
 extension, as provided by local Compose.
+
+## Prepared content domain (phase 08)
+
+The [canonical content guide](src/voice_archive_api/application/content_validation/README.md) documents the v1 JSON Schema,
+complete synthetic example, HTML/text rules, coordinate/timing conventions,
+validation library, resource limits, and sample verification. Migration
+`0012_content_domain` adds sections/segments, Book import metadata, generated
+indexed page lookup, and section-owned audio file invariants. Whole-book deletion
+and maintenance include section audio. Audio preparation, content import/dry-run,
+manifest/purge, and CLI endpoints are phase 09; current uploads still accept only
+cover/PDF. Run migrations as usual before using the new models. A downgrade refuses
+existing audio files to avoid silently losing their ownership or bytes.

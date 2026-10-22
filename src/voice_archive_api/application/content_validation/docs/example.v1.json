@@ -1,0 +1,103 @@
+{
+  "schema_version": 1,
+  "source_pdf_file_id": 101,
+  "sections": [
+    {
+      "source_key": "chapter-1",
+      "kind": "chapter",
+      "title": "First chapter",
+      "sibling_sequence": 0,
+      "audio_file_id": 201
+    },
+    {
+      "source_key": "nested",
+      "parent_source_key": "chapter-1",
+      "kind": "section",
+      "title": "A smaller section",
+      "sibling_sequence": 0,
+      "audio_file_id": 202
+    },
+    {
+      "source_key": "empty",
+      "parent_source_key": "nested",
+      "kind": "section",
+      "title": "An empty section",
+      "sibling_sequence": 0
+    },
+    {
+      "source_key": "chapter-2",
+      "kind": "chapter",
+      "title": "Second chapter",
+      "sibling_sequence": 1
+    }
+  ],
+  "segments": [
+    {
+      "source_key": "front",
+      "sequence": 0,
+      "kind": "prose",
+      "html_content": "<p class=\"align-center no-indent\">Unnarrated front matter — ಕನ್ನಡ.</p>"
+    },
+    {
+      "source_key": "heading",
+      "section_source_key": "chapter-1",
+      "sequence": 10,
+      "kind": "heading",
+      "html_content": "<h1>First <em>chapter</em></h1>",
+      "narration_start_ms": 5000,
+      "narration_end_ms": 6000
+    },
+    {
+      "source_key": "paragraph",
+      "section_source_key": "nested",
+      "sequence": 20,
+      "kind": "prose",
+      "html_content": "<p class=\"gap-before gap-after no-indent\">A <strong>bold <em>and italic</em></strong> phrase &amp; literal &lt;markup&gt;.</p>",
+      "regions": [
+        {
+          "page_index": 0,
+          "x0": 0.1,
+          "y0": 0.8,
+          "x1": 0.9,
+          "y1": 0.9
+        },
+        {
+          "page_index": 1,
+          "x0": 0.1,
+          "y0": 0.1,
+          "x1": 0.9,
+          "y1": 0.2
+        },
+        {
+          "page_index": 1,
+          "x0": 0.1,
+          "y0": 0.3,
+          "x1": 0.7,
+          "y1": 0.4
+        }
+      ],
+      "narration_start_ms": 1000,
+      "narration_end_ms": 4000,
+      "narration_seek_ms": 750,
+      "alignment_status": "interpolated",
+      "alignment_metadata": {
+        "source": "synthetic",
+        "confidence": 0.8
+      }
+    },
+    {
+      "source_key": "verse",
+      "section_source_key": "nested",
+      "sequence": 30,
+      "kind": "verse",
+      "html_content": "<p class=\"align-right\">One line<br>Another&nbsp;line<br/>🌕 é</p>"
+    },
+    {
+      "source_key": "last",
+      "section_source_key": "chapter-2",
+      "sequence": 40,
+      "kind": "prose",
+      "html_content": "<p class=\"align-left\">Text without audio.</p>"
+    }
+  ]
+}

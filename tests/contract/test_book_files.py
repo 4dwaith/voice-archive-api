@@ -118,6 +118,7 @@ def test_invalid_upload_request_has_a_documented_error(client, file_storage, pat
     [
         ("/api/v1/files/{file_id}", "image/webp"),
         ("/api/v1/files/{file_id}", "application/pdf"),
+        ("/api/v1/files/{file_id}", "audio/mpeg"),
     ],
 )
 @pytest.mark.parametrize("status", ["200", "206"])
@@ -128,7 +129,7 @@ def test_file_delivery_binary_contracts(openapi_document, path, media_type, stat
         "get",
         status,
         media_type,
-        additional_media_types=tuple({"image/webp", "application/pdf"} - {media_type})
+        additional_media_types=tuple({"image/webp", "application/pdf", "audio/mpeg"} - {media_type})
         + (("multipart/byteranges",) if status == "206" else ()),
     )
     assert "requestBody" not in openapi_document["paths"][path]["get"]

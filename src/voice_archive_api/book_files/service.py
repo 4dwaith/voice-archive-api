@@ -1,11 +1,13 @@
-from collections.abc import Iterator
+from collections.abc import Collection, Iterator
 from contextlib import contextmanager
 from datetime import UTC, datetime
+from types import MappingProxyType
 
+from sqlalchemy import select, update
 from sqlalchemy.orm import Session
 
 from voice_archive_api.book_files.covers import prepare_cover
-from voice_archive_api.book_files.model import FileKind, FileStrategy, PendingFileDeletion, StoredFile
+from voice_archive_api.book_files.model import FileKind, FileStrategy, PendingFileDeletion, PreparedAsset, StoredFile
 from voice_archive_api.book_files.pdfs import prepare_pdf
 from voice_archive_api.core.errors import ApplicationError
 from voice_archive_api.file_handling import BinarySource, Storage
@@ -13,6 +15,8 @@ from voice_archive_api.file_handling import BinarySource, Storage
 FILE_STRATEGIES = {
     FileKind.COVER: FileStrategy(prepare_cover, "cover_max_bytes", "image/webp", "cover.webp"),
     FileKind.SOURCE_PDF: FileStrategy(prepare_pdf, "pdf_max_bytes", "application/pdf", "source.pdf"),
+    # Prepared audio ownership/delivery is supported; MP3 preparation arrives in phase 09.
+    FileKind.AUDIO_CHAPTER: FileStrategy(None, None, "audio/mpeg", "chapter.mp3"),
 }
 
 
@@ -29,12 +33,12 @@ class FileNotFound(ApplicationError):
 
 class FileAlreadyLinked(ApplicationError):
     code = "file_already_linked"
-    message = "File is already linked to a book"
+    message = "File is already linked to an owner"
 
 
 class FileKindMismatch(ApplicationError):
     code = "file_kind_mismatch"
-    message = "File kind does not match the book field"
+    message = "File kind does not match the owner field"
 
 
 def queue_file_deletion(db: Session, record: StoredFile, *, now: datetime) -> None:
@@ -52,13 +56,32 @@ def get_file(db: Session, file_id: int, *, expected_kind: FileKind | None = None
     return record
 
 
+def get_prepared_assets(db: Session, file_ids: Collection[int]) -> dict[int, PreparedAsset]:
+    """Read prepared-file snapshots in one query; omit missing IDs for caller diagnostics.
+
+    This does not claim owners or commit. Mutating callers must lock/recheck files
+    in their publication transaction before claiming them.
+    """
+    if not file_ids:
+        return {}
+    records = db.execute(
+        select(
+            StoredFile.id, StoredFile.kind, StoredFile.book_id, StoredFile.section_id, StoredFile.file_metadata
+        ).where(StoredFile.id.in_(file_ids))
+    )
+    return {
+        file_id: PreparedAsset(file_id, kind, book_id, section_id, MappingProxyType(dict(metadata)))
+        for file_id, kind, book_id, section_id, metadata in records
+    }
+
+
 def delete_file(db: Session, file_id: int) -> None:
     """Delete an unlinked row and queue its bytes, serializing with ownership updates."""
     with file_write(db):
         record = db.get(StoredFile, file_id, with_for_update=True, populate_existing=True)
         if record is None:
             raise FileNotFound
-        if record.book_id is not None:
+        if record.book_id is not None or record.section_id is not None:
             raise FileAlreadyLinked
         queue_file_deletion(db, record, now=datetime.now(UTC))
         db.commit()
@@ -81,7 +104,10 @@ def create_file(
     *,
     max_bytes: int,
 ) -> StoredFile:
-    prepared = FILE_STRATEGIES[kind].prepare(source, storage, max_bytes=max_bytes)
+    prepare = FILE_STRATEGIES[kind].prepare
+    if prepare is None:
+        raise ValueError(f"Preparation is not available for {kind}")
+    prepared = prepare(source, storage, max_bytes=max_bytes)
     with file_write(db):
         record = StoredFile(
             kind=kind,
@@ -94,3 +120,23 @@ def create_file(
         # Preserve promoted bytes on an ambiguous commit; orphan maintenance reclaims them.
         db.commit()
         return record
+
+
+def claim_section_audio(db: Session, file_id: int, *, section_id: int) -> None:
+    """Claim an unowned prepared audio row in the caller's transaction."""
+    claimed = db.scalar(
+        update(StoredFile)
+        .where(
+            StoredFile.id == file_id,
+            StoredFile.book_id.is_(None),
+            StoredFile.section_id.is_(None),
+            StoredFile.kind == FileKind.AUDIO_CHAPTER,
+        )
+        .values(section_id=section_id)
+        .returning(StoredFile.id)
+        .execution_options(synchronize_session=False)
+    )
+    if claimed is None:
+        db.expire_all()
+        get_file(db, file_id, expected_kind=FileKind.AUDIO_CHAPTER)
+        raise FileAlreadyLinked

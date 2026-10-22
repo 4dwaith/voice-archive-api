@@ -1,0 +1,316 @@
+{
+  "$defs": {
+    "JsonValue": {},
+    "Region": {
+      "additionalProperties": false,
+      "properties": {
+        "page_index": {
+          "maximum": 2147483647,
+          "minimum": 0,
+          "title": "Page Index",
+          "type": "integer"
+        },
+        "x0": {
+          "maximum": 1,
+          "minimum": 0,
+          "title": "X0",
+          "type": "number"
+        },
+        "y0": {
+          "maximum": 1,
+          "minimum": 0,
+          "title": "Y0",
+          "type": "number"
+        },
+        "x1": {
+          "maximum": 1,
+          "minimum": 0,
+          "title": "X1",
+          "type": "number"
+        },
+        "y1": {
+          "maximum": 1,
+          "minimum": 0,
+          "title": "Y1",
+          "type": "number"
+        }
+      },
+      "required": [
+        "page_index",
+        "x0",
+        "y0",
+        "x1",
+        "y1"
+      ],
+      "title": "Region",
+      "type": "object"
+    },
+    "SectionInput": {
+      "additionalProperties": false,
+      "properties": {
+        "source_key": {
+          "maxLength": 256,
+          "minLength": 1,
+          "title": "Source Key",
+          "type": "string"
+        },
+        "parent_source_key": {
+          "anyOf": [
+            {
+              "maxLength": 256,
+              "minLength": 1,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Parent Source Key"
+        },
+        "kind": {
+          "$ref": "#/$defs/SectionKind"
+        },
+        "title": {
+          "maxLength": 2000,
+          "minLength": 1,
+          "title": "Title",
+          "type": "string"
+        },
+        "sibling_sequence": {
+          "maximum": 2147483647,
+          "minimum": 0,
+          "title": "Sibling Sequence",
+          "type": "integer"
+        },
+        "audio_file_id": {
+          "anyOf": [
+            {
+              "exclusiveMinimum": 0,
+              "maximum": 9223372036854775807,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Audio File Id"
+        }
+      },
+      "required": [
+        "source_key",
+        "kind",
+        "title",
+        "sibling_sequence"
+      ],
+      "title": "SectionInput",
+      "type": "object"
+    },
+    "SectionKind": {
+      "enum": [
+        "part",
+        "chapter",
+        "section"
+      ],
+      "title": "SectionKind",
+      "type": "string"
+    },
+    "SegmentInput": {
+      "additionalProperties": false,
+      "properties": {
+        "source_key": {
+          "maxLength": 256,
+          "minLength": 1,
+          "title": "Source Key",
+          "type": "string"
+        },
+        "section_source_key": {
+          "anyOf": [
+            {
+              "maxLength": 256,
+              "minLength": 1,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Section Source Key"
+        },
+        "sequence": {
+          "maximum": 2147483647,
+          "minimum": 0,
+          "title": "Sequence",
+          "type": "integer"
+        },
+        "kind": {
+          "$ref": "#/$defs/SegmentKind"
+        },
+        "html_content": {
+          "maxLength": 256000,
+          "minLength": 1,
+          "title": "Html Content",
+          "type": "string"
+        },
+        "language": {
+          "anyOf": [
+            {
+              "maxLength": 100,
+              "minLength": 1,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Language"
+        },
+        "regions": {
+          "items": {
+            "$ref": "#/$defs/Region"
+          },
+          "maxItems": 256,
+          "title": "Regions",
+          "type": "array"
+        },
+        "narration_start_ms": {
+          "anyOf": [
+            {
+              "maximum": 9223372036854775807,
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Narration Start Ms"
+        },
+        "narration_end_ms": {
+          "anyOf": [
+            {
+              "maximum": 9223372036854775807,
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Narration End Ms"
+        },
+        "narration_seek_ms": {
+          "anyOf": [
+            {
+              "maximum": 9223372036854775807,
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Narration Seek Ms"
+        },
+        "alignment_status": {
+          "anyOf": [
+            {
+              "maxLength": 128,
+              "minLength": 1,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Alignment Status"
+        },
+        "alignment_metadata": {
+          "anyOf": [
+            {
+              "additionalProperties": {
+                "$ref": "#/$defs/JsonValue"
+              },
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Alignment Metadata"
+        }
+      },
+      "required": [
+        "source_key",
+        "sequence",
+        "kind",
+        "html_content"
+      ],
+      "title": "SegmentInput",
+      "type": "object"
+    },
+    "SegmentKind": {
+      "enum": [
+        "heading",
+        "prose",
+        "verse"
+      ],
+      "title": "SegmentKind",
+      "type": "string"
+    }
+  },
+  "additionalProperties": false,
+  "properties": {
+    "schema_version": {
+      "const": 1,
+      "title": "Schema Version",
+      "type": "integer"
+    },
+    "source_pdf_file_id": {
+      "anyOf": [
+        {
+          "exclusiveMinimum": 0,
+          "maximum": 9223372036854775807,
+          "type": "integer"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Source Pdf File Id"
+    },
+    "sections": {
+      "items": {
+        "$ref": "#/$defs/SectionInput"
+      },
+      "maxItems": 50000,
+      "title": "Sections",
+      "type": "array"
+    },
+    "segments": {
+      "items": {
+        "$ref": "#/$defs/SegmentInput"
+      },
+      "maxItems": 100000,
+      "minItems": 1,
+      "title": "Segments",
+      "type": "array"
+    }
+  },
+  "required": [
+    "schema_version",
+    "sections",
+    "segments"
+  ],
+  "title": "ContentInput",
+  "type": "object"
+}

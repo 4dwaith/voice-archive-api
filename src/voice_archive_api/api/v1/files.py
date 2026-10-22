@@ -61,7 +61,7 @@ def file_delivery_responses(*, head: bool = False) -> dict[int | str, dict[str, 
     },
 )
 def create_file(
-    kind: FileKind,
+    kind: Literal[FileKind.COVER, FileKind.SOURCE_PDF],
     file: Annotated[UploadFile, File(description="File bytes, validated and prepared according to kind")],
     db: Annotated[Session, Depends(get_db)],
     storage: FileStorage,
@@ -69,6 +69,7 @@ def create_file(
 ) -> StoredFile:
     """Prepare a file independently of book create/save; return its ID for linking."""
     strategy = FILE_STRATEGIES[kind]
+    assert strategy.limit_setting_key is not None
     return service.create_file(db, kind, file.file, storage, max_bytes=getattr(settings, strategy.limit_setting_key))
 
 
@@ -116,7 +117,7 @@ def head_file(
     responses=invalid_request
     | missing_file
     | {
-        409: {"model": FileErrorResponse, "description": "File is linked to a book"},
+        409: {"model": FileErrorResponse, "description": "File is linked to an owner"},
     },
 )
 def delete_file(file_id: FileId, db: Annotated[Session, Depends(get_db)]) -> Response:

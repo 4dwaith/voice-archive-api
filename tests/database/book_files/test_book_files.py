@@ -4,11 +4,12 @@ from unittest.mock import Mock
 
 import psycopg
 import pytest
-from sqlalchemy import CheckConstraint, MetaData, Table, event, func, inspect, select
+from sqlalchemy import CheckConstraint, MetaData, Table, event, func, inspect, select, text
 from sqlalchemy.exc import IntegrityError, OperationalError
 from sqlalchemy.orm import Session
 
 from alembic import command
+from tests.database.content_helpers import add_audio
 from tests.file_processing.file_samples import cover_bytes, pdf_bytes
 from voice_archive_api.book_files import service
 from voice_archive_api.book_files.covers import InvalidImage
@@ -67,7 +68,7 @@ def test_file_column_check_names_match_the_migration(test_engine):
     assert "ck_files_file_kind" in database_constraints  # Derived from naming convention
 
 
-@pytest.mark.parametrize("kind", list(FileKind))
+@pytest.mark.parametrize("kind", [FileKind.COVER, FileKind.SOURCE_PDF])
 def test_prepared_files_persist_without_a_book_and_reload(test_engine, storage, kind):
     with Session(test_engine) as db:
         record = create_file(db, storage, kind)
@@ -103,7 +104,7 @@ def test_invalid_input_cleanup(test_engine, storage, kind, error):
     assert not remaining_files(storage)
 
 
-@pytest.mark.parametrize("kind", list(FileKind))
+@pytest.mark.parametrize("kind", [FileKind.COVER, FileKind.SOURCE_PDF])
 def test_database_failure_after_commit_preserves_file(test_engine, storage, kind, monkeypatch):
     commit = test_engine.dialect.do_commit
     connection_error = psycopg.OperationalError("connection lost after commit")
@@ -196,7 +197,7 @@ def test_file_size_supports_more_than_2gb(test_engine):
         assert db.get(StoredFile, record.id).byte_size == 5_000_000_000
 
 
-@pytest.mark.parametrize("kind", list(FileKind))
+@pytest.mark.parametrize("kind", [FileKind.COVER, FileKind.SOURCE_PDF])
 def test_files_can_be_added_after_full_downgrade_and_upgrade(test_engine, migration_config, kind):
     command.downgrade(migration_config, "base")
     command.upgrade(migration_config, "head")
@@ -249,7 +250,7 @@ def test_upgrade_from_first_file_revision_preserves_existing_files(
         assert record.file_metadata == metadata
 
 
-@pytest.mark.parametrize("kind", list(FileKind))
+@pytest.mark.parametrize("kind", [FileKind.COVER, FileKind.SOURCE_PDF])
 def test_failed_explicit_deletion_commit_preserves_file_record_and_bytes(test_engine, storage, kind):
     with Session(test_engine) as db:
         record = create_file(db, storage, kind)
@@ -265,3 +266,73 @@ def test_failed_explicit_deletion_commit_preserves_file_record_and_bytes(test_en
         assert db.get(StoredFile, file_id) is not None
         assert db.get(PendingFileDeletion, key) is None
     assert storage.exists(key)
+
+
+def test_downgrade_refuses_audio_without_losing_data(test_engine, migration_config):
+    with Session(test_engine) as db:
+        record = add_audio(db)
+        key = record.storage_key
+        file_id = record.id
+        db.commit()
+    with pytest.raises(Exception, match="Remove audio_chapter files"):
+        command.downgrade(migration_config, "0011_file_metadata_constraints")
+    with Session(test_engine) as db:
+        assert db.scalar(select(StoredFile.storage_key)) == key
+        service.delete_file(db, file_id)
+    command.downgrade(migration_config, "0011_file_metadata_constraints")
+    with test_engine.connect() as connection:
+        assert connection.scalar(text("SELECT to_regprocedure('public.region_pages(jsonb)')")) is None
+    command.upgrade(migration_config, "head")
+
+
+def test_prepared_asset_lookup_skips_database_for_empty_ids():
+    db = Mock(spec=Session)
+    assert service.get_prepared_assets(db, []) == {}
+    db.execute.assert_not_called()
+    db.commit.assert_not_called()
+
+
+def test_prepared_asset_lookup_returns_detached_snapshots_in_one_query(test_engine):
+    from tests.database.book_files.test_file_ownership import add_book
+    from tests.database.content_helpers import add_section
+
+    statements = []
+
+    def capture_query(connection, cursor, statement, parameters, context, executemany):
+        statements.append(statement)
+
+    with Session(test_engine) as db:
+        book = add_book(db)
+        root = add_section(db, book.id)
+        cover = file_record(storage_key="lookup-cover", book_id=book.id)
+        pdf = file_record(kind=FileKind.SOURCE_PDF, storage_key="lookup-pdf")
+        extra = file_record(storage_key="not-requested")
+        track = add_audio(db, section_id=root.id)
+        db.add_all([cover, pdf, extra])
+        db.flush()
+        cover_id, pdf_id, track_id, book_id, root_id = cover.id, pdf.id, track.id, book.id, root.id
+        event.listen(test_engine, "before_cursor_execute", capture_query)
+        try:
+            snapshots = service.get_prepared_assets(db, {cover_id, pdf_id, track_id, 9_223_372_036_854_775_807})
+        finally:
+            event.remove(test_engine, "before_cursor_execute", capture_query)
+        assert len(statements) == 1
+        assert set(snapshots) == {cover_id, pdf_id, track_id}
+        # A snapshot must not share the ORM record's mutable metadata dictionary.
+        cover.file_metadata["width"] = 99
+        assert snapshots[cover_id].metadata["width"] == 16
+
+    # All returned fields remain readable after the session is closed.
+    assert (snapshots[cover_id].kind, snapshots[cover_id].book_id, snapshots[cover_id].section_id) == (
+        FileKind.COVER,
+        book_id,
+        None,
+    )
+    assert (snapshots[track_id].kind, snapshots[track_id].book_id, snapshots[track_id].section_id) == (
+        FileKind.AUDIO_CHAPTER,
+        None,
+        root_id,
+    )
+    assert snapshots[pdf_id].metadata == {"page_count": 3}
+    with pytest.raises(TypeError):
+        snapshots[track_id].metadata["duration_ms"] = 999
