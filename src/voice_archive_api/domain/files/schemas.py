@@ -39,4 +39,19 @@ class SourcePdfFileResponse(FileResponseBase):
     metadata: SourcePdfMetadata = Field(validation_alias="file_metadata")
 
 
-type FileResponse = Annotated[CoverFileResponse | SourcePdfFileResponse, Field(discriminator="kind")]
+class AudioMetadata(BaseModel):
+    model_config = ConfigDict(extra="allow")
+
+    duration_ms: Annotated[int, Field(strict=True, gt=0, le=9_223_372_036_854_775_807)]
+    sample_rate: PositiveMetadataInteger
+    channels: PositiveMetadataInteger
+
+
+class AudioFileResponse(FileResponseBase):
+    kind: Literal[FileKind.AUDIO_CHAPTER]
+    metadata: AudioMetadata = Field(validation_alias="file_metadata")
+
+
+type FileResponse = Annotated[
+    CoverFileResponse | SourcePdfFileResponse | AudioFileResponse, Field(discriminator="kind")
+]

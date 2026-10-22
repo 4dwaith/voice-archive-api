@@ -28,7 +28,7 @@ class InvalidMultipart(ApplicationError):
 
 
 class FileUploadErrorResponse(ErrorResponse[Literal["file_too_large", "invalid_multipart"]]):
-    """Errors shared by cover and PDF upload requests."""
+    """Errors shared by cover, PDF, and MP3 upload requests."""
 
 
 class UploadRoute(APIRoute):

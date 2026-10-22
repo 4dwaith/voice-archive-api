@@ -493,3 +493,25 @@ def file_already_linked(state, kind):
     response = result(state)
     assert response.status_code == 409, response.text
     assert response.json()["error"]["code"] == "file_already_linked"
+
+
+@then("I am told that content purge is required")
+def content_purge_required(state):
+    response = result(state)
+    assert response.status_code == 409, response.text
+    assert response.json()["error"]["code"] == "content_purge_required"
+
+
+@given("the book has imported text content")
+def imported_text_content(client, state):
+    book = state.selected
+    response = client.post(
+        f"/api/v1/books/{book['id']}/content-imports",
+        json={
+            "schema_version": 1,
+            "source_pdf_file_id": book["source_pdf_file_id"],
+            "sections": [],
+            "segments": [{"source_key": "text", "sequence": 0, "kind": "prose", "html_content": "<p>Text</p>"}],
+        },
+    )
+    assert response.status_code == 200, response.text

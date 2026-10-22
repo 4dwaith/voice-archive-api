@@ -21,6 +21,7 @@ type FileErrorCode = Literal[
     "unsupported_media_type",
     "invalid_pdf",
     "encrypted_pdf_not_supported",
+    "invalid_audio",
 ]
 
 
@@ -61,7 +62,7 @@ def file_delivery_responses(*, head: bool = False) -> dict[int | str, dict[str, 
     },
 )
 def create_file(
-    kind: Literal[FileKind.COVER, FileKind.SOURCE_PDF],
+    kind: FileKind,
     file: Annotated[UploadFile, File(description="File bytes, validated and prepared according to kind")],
     db: Annotated[Session, Depends(get_db)],
     storage: FileStorage,

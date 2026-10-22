@@ -39,7 +39,11 @@ def test_upload_body_contract_requires_a_multipart_file(openapi_document):
 def test_upload_response_contract_exposes_only_public_file_details(openapi_document):
     schemas = openapi_document["components"]["schemas"]
     schema = schemas["FileResponse"]
-    variants = {"cover": "CoverFileResponse", "source_pdf": "SourcePdfFileResponse"}
+    variants = {
+        "cover": "CoverFileResponse",
+        "source_pdf": "SourcePdfFileResponse",
+        "audio_chapter": "AudioFileResponse",
+    }
     assert schema["discriminator"] == {
         "propertyName": "kind",
         "mapping": {kind: f"#/components/schemas/{model}" for kind, model in variants.items()},

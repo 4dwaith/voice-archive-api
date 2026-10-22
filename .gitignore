@@ -7,7 +7,7 @@
 .mypy_cache/
 .venv/
 .pytest-tmp/
-.pytest-tmp-parallel/
+.pytest-tmp-*/
 .uv-cache/
 .uv-python/
 __pycache__/

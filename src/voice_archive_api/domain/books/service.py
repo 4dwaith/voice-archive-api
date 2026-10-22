@@ -9,13 +9,13 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from voice_archive_api.core.errors import ApplicationError
+from voice_archive_api.domain.book_cleanup import delete_book_content_and_files
 from voice_archive_api.domain.books.constants import (
     UNIQUE_BOOK_IDENTITY,
 )
 from voice_archive_api.domain.books.model import Book
 from voice_archive_api.domain.books.schemas import BookCreate, BookPatch
 from voice_archive_api.domain.books.validation import normalize_identity
-from voice_archive_api.domain.content.model import BookSection
 from voice_archive_api.domain.files import service as file_service
 from voice_archive_api.domain.files.model import FileKind, StoredFile
 
@@ -30,10 +30,18 @@ class DuplicateBook(ApplicationError):
     message = "A book with this title and author already exists"
 
 
+class ContentPurgeRequired(ApplicationError):
+    code = "content_purge_required"
+    message = "Purge imported book content before changing its source PDF"
+
+
 def get_book(db: Session, book_id: int, *, for_update: bool = False) -> Book:
     book = db.get(Book, book_id, with_for_update=for_update, populate_existing=for_update)
     if book is None:
         raise BookNotFound
+    if for_update:
+        # Refresh scalar file-owner projections after a possibly blocking lock wait.
+        db.refresh(book)
     return book
 
 
@@ -133,6 +141,12 @@ def patch_book(db: Session, book_id: int, payload: BookPatch) -> Book:
     with book_write(db):
         book = get_book(db, book_id, for_update=True)
         changes = payload.model_dump()
+        if (
+            "source_pdf_file_id" in changes
+            and changes["source_pdf_file_id"] != book.source_pdf_file_id
+            and book.content_version is not None
+        ):
+            raise ContentPurgeRequired
         if not any(getattr(book, field) != value for field, value in changes.items()):
             return book
 
@@ -178,26 +192,7 @@ def delete_book(db: Session, book_id: int) -> bool:
         book = db.get(Book, book_id, with_for_update=True, populate_existing=True)
         if book is None:
             return False
-        records = list(
-            db.scalars(
-                select(StoredFile)
-                .where(
-                    (StoredFile.book_id == book_id)
-                    | StoredFile.section_id.in_(select(BookSection.id).where(BookSection.book_id == book_id))
-                )
-                .with_for_update()
-                .execution_options(populate_existing=True)
-            )
-        )
-        now = datetime.now(UTC)
-        for record in records:
-            record.book_id = None
-            record.section_id = None
-        # Flush detachment separately so DELETE triggers see the unlinked rows.
-        db.flush()
-        for record in records:
-            file_service.queue_file_deletion(db, record, now=now)
-        db.flush()
+        delete_book_content_and_files(db, book_id, include_cover=True)
         db.delete(book)
         db.commit()
         return True

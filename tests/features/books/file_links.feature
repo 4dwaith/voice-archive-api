@@ -150,3 +150,33 @@ Feature: Link prepared covers and PDFs through an explicit book save
       | cover      | Cover |
       | source PDF | PDF   |
 
+
+  Scenario: An imported book PDF must be removed through conditional content purge
+    Given my library contains "Existing" linked to prepared cover "Cover" and source PDF "PDF"
+    And I am editing the book "Existing"
+    And the book has imported text content
+    And I have cleared the source PDF link
+    When I save my changes
+    Then I am told that content purge is required
+    And the book remains unchanged
+
+  Scenario: An imported book PDF cannot be replaced through book save
+    Given my library contains "Existing" linked to prepared cover "Cover" and source PDF "PDF"
+    And a prepared source PDF named "Replacement" exists
+    And I am editing the book "Existing"
+    And the book has imported text content
+    And I have selected prepared source PDF "Replacement"
+    When I save my changes
+    Then I am told that content purge is required
+    And the book remains unchanged
+
+  Scenario: A PDF can be replaced before content is imported
+    Given my library contains "Existing" linked to prepared cover "Cover" and source PDF "PDF"
+    And a prepared source PDF named "Replacement" exists
+    And I am editing the book "Existing"
+    And I have selected prepared source PDF "Replacement"
+    When I save my changes
+    Then my changes are saved
+    And the book links to prepared source PDF "Replacement"
+    And the book links to prepared cover "Cover"
+    And the original source PDF can no longer be retrieved

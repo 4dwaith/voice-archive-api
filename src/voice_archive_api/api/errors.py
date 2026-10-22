@@ -8,6 +8,7 @@ from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 from starlette.exceptions import HTTPException
 
+from voice_archive_api.application.content_validation.validation import ContentValidationError
 from voice_archive_api.core.errors import ApplicationError
 
 logger = logging.getLogger(__name__)
@@ -24,6 +25,11 @@ APPLICATION_ERROR_STATUSES = {
     "encrypted_pdf_not_supported": 422,
     "file_too_large": 413,
     "invalid_multipart": 400,
+    "invalid_audio": 422,
+    "content_purge_required": 409,
+    "content_exists": 409,
+    "content_precondition_required": 428,
+    "content_precondition_failed": 412,
 }
 
 
@@ -61,6 +67,22 @@ COMMON_ERROR_RESPONSES = {
 
 
 def install_error_handlers(app: FastAPI) -> None:
+    @app.exception_handler(ContentValidationError)
+    async def invalid_content(request: Request, exc: ContentValidationError) -> JSONResponse:
+        from dataclasses import asdict
+
+        oversized = any(issue.code == "payload_limit" for issue in exc.issues)
+        return JSONResponse(
+            status_code=413 if oversized else 422,
+            content={
+                "error": {
+                    "code": "content_payload_too_large" if oversized else "content_validation_error",
+                    "message": "Content validation failed",
+                },
+                "issues": [asdict(issue) for issue in exc.issues],
+            },
+        )
+
     @app.exception_handler(ApplicationError)
     async def application_error(request: Request, exc: ApplicationError) -> JSONResponse:
         status = APPLICATION_ERROR_STATUSES.get(getattr(exc, "code", ""))

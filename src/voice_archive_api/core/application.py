@@ -39,7 +39,7 @@ class Application(FastAPI):
             allow_credentials=True,
             allow_methods=["*"],
             allow_headers=["*"],
-            expose_headers=["X-Request-ID"],
+            expose_headers=["X-Request-ID", "ETag"],
         )
         active_middleware = CorrelationIdMiddleware(active_middleware)
 

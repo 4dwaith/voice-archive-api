@@ -66,6 +66,14 @@ def validate_assets(validated: ValidatedContent, assets: Mapping[int, PreparedAs
         record = get_file(section.audio_file_id, FileKind.AUDIO_CHAPTER, path, section.source_key)
         if record is not None:
             audio[section.source_key] = record
+            duration = record.metadata.get("duration_ms")
+            if type(duration) is not int or duration <= 0:
+                issue(
+                    "audio_metadata",
+                    path,
+                    section.source_key,
+                    "Prepared audio must have a positive integer duration_ms",
+                )
 
     for i, segment in enumerate(content.segments):
         path = f"$.segments[{i}]"

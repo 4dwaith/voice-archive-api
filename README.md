@@ -24,7 +24,9 @@ after code or dependency changes; Compose does not enable hot reload.
 | API | Purpose |
 | --- | --- |
 | `/api/v1/books` and `/{id}` | Create, list, retrieve, update, and delete books |
-| `/api/v1/files/{kind}` | Upload and prepare a `cover` or `source_pdf` |
+| `/api/v1/files/{kind}` | Upload and prepare a `cover`, `source_pdf`, or `audio_chapter` MP3 |
+| `/api/v1/books/{id}/content-imports` | Atomic canonical import, with optional dry-run |
+| `/api/v1/books/{id}/content` | Content manifest/ETag and conditional PDF/audio/text purge |
 | `/api/v1/files/{id}` | GET/HEAD delivery with native byte ranges; DELETE unlinked files |
 | `/api/v1/health` | Liveness without database access |
 | `/api/v1/ready` | Database readiness; used by Compose |
@@ -37,14 +39,15 @@ require cover `width`/`height` and PDF `page_count` to be positive integers in t
 PostgreSQL `INTEGER` range. The upload response is a discriminated union on
 `kind`, with required typed metadata fields for each variant. A kind registry
 selects preparation, input size limits, delivery media type, and download filename.
-Files hold an optional `book_id` foreign key, with one file per `(book_id, kind)`.
+Files hold exclusive optional `book_id`/`section_id` owners. Cover/PDF belong to
+books, and chapter audio belongs to sections, with one file per owner and kind.
 Book cover/PDF IDs are derived from those rows; their kind determines their role.
 The service validates requested IDs and atomically claims unowned files.
 Database constraints enforce ownership and the supported book file kinds.
 Deleting a linked file row is rejected by a database trigger, including direct
 SQL deletes. Book operations detach old files before deleting them and queueing
 their bytes, all in the same transaction.
-Default input limits are 25 MiB per cover and 1.5 GB per PDF, configurable through
+Default input limits are 25 MiB per cover and 1.5 GB per PDF or MP3, configurable through
 [.env.example](.env.example).
 Book responses include nullable `cover_url` and `source_pdf_url` API paths for
 delivery, alongside file IDs used for linking. Deleting an unlinked file returns
@@ -225,10 +228,11 @@ Credentials stay in the ignored environment files, outside the saved configurati
 
 Under [src/voice_archive_api](src/voice_archive_api/), `domain/` groups related
 models and services into `books/`, `content/`, and `files/`. These services
-own database access for their capabilities. `application/` groups broader capabilities;
+own database access and transactions for their capabilities. `application/` holds pure logic;
 its `content_validation/` module owns prepared-content validation and its guide,
-JSON Schema, and example. Each application module keeps one README alongside its
-implementation and obtains persisted data through domain services. Its tests
+JSON Schema, and example. The content domain service owns publication and its
+transaction, calling the pure validation module. Each application module keeps one README alongside its
+implementation. Domain services supply data to pure logic and persist its results. Its tests
 mirror the module name under `tests/application/`.
 `file_handling/` provides storage and delivery;
 `api/` defines HTTP contracts; `core/` and `db/` provide configuration, dependencies,
@@ -270,7 +274,10 @@ complete synthetic example, HTML/text rules, coordinate/timing conventions,
 validation library, resource limits, and sample verification. Migration
 `0012_content_domain` adds sections/segments, Book import metadata, generated
 indexed page lookup, and section-owned audio file invariants. Whole-book deletion
-and maintenance include section audio. Audio preparation, content import/dry-run,
-manifest/purge, and CLI endpoints are phase 09; current uploads still accept only
-cover/PDF. Run migrations as usual before using the new models. A downgrade refuses
+and maintenance include section audio. Phase 09 now implements audio preparation,
+content import/dry-run, manifest/purge, and the CLI calling the content service directly. See the
+[publication and purge guide](src/voice_archive_api/domain/content/README.md) for
+commands, limits, errors, cancellation, sample conversion, and media lifecycle.
+PDF links can be replaced or cleared through book PATCH until content is imported.
+After import, changing the PDF requires conditional content purge. Run migrations as usual before using the new models. A downgrade refuses
 existing audio files to avoid silently losing their ownership or bytes.

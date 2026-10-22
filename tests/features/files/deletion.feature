@@ -1,6 +1,7 @@
 Feature: Delete prepared files that are not linked to a book
   Deletion removes the file record immediately and queues its bytes for maintenance.
-  A book's current files must be removed through a book save or book deletion.
+  Covers and PDFs without imported content can be removed through book save.
+  Imported book PDFs require conditional content purge or whole-book deletion.
 
   Scenario Outline: Delete an unlinked prepared file
     Given I have uploaded a prepared <kind>

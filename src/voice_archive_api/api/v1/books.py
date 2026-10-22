@@ -19,6 +19,7 @@ type BookErrorCode = Literal[
     "book_not_found",
     "duplicate_book",
     "file_already_linked",
+    "content_purge_required",
 ]
 
 
@@ -103,7 +104,8 @@ def get_book(book_id: BookId, db: Database) -> Book:
 def patch_book(book_id: BookId, payload: BookPatch, db: Database) -> Book:
     """Update supplied fields. Omission preserves values; only nullable fields accept null.
 
-    Optional cover/PDF IDs link prepared files; null clears the corresponding link.
+    Optional cover/PDF IDs attach prepared files. PDF links may be changed if
+    a book has no content; afterward, changing the PDF requires content purge.
     """
     return service.patch_book(db, book_id, payload)
 

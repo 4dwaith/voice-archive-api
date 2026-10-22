@@ -7,6 +7,7 @@ from sqlalchemy import select, update
 from sqlalchemy.orm import Session
 
 from voice_archive_api.core.errors import ApplicationError
+from voice_archive_api.domain.files.audio import prepare_audio
 from voice_archive_api.domain.files.covers import prepare_cover
 from voice_archive_api.domain.files.model import FileKind, FileStrategy, PendingFileDeletion, PreparedAsset, StoredFile
 from voice_archive_api.domain.files.pdfs import prepare_pdf
@@ -15,8 +16,7 @@ from voice_archive_api.file_handling import BinarySource, Storage
 FILE_STRATEGIES = {
     FileKind.COVER: FileStrategy(prepare_cover, "cover_max_bytes", "image/webp", "cover.webp"),
     FileKind.SOURCE_PDF: FileStrategy(prepare_pdf, "pdf_max_bytes", "application/pdf", "source.pdf"),
-    # Prepared audio ownership/delivery is supported; MP3 preparation arrives in phase 09.
-    FileKind.AUDIO_CHAPTER: FileStrategy(None, None, "audio/mpeg", "chapter.mp3"),
+    FileKind.AUDIO_CHAPTER: FileStrategy(prepare_audio, "audio_max_bytes", "audio/mpeg", "chapter.mp3"),
 }
 
 
@@ -56,19 +56,24 @@ def get_file(db: Session, file_id: int, *, expected_kind: FileKind | None = None
     return record
 
 
-def get_prepared_assets(db: Session, file_ids: Collection[int]) -> dict[int, PreparedAsset]:
+def get_prepared_assets(
+    db: Session, file_ids: Collection[int], *, for_update: bool = False
+) -> dict[int, PreparedAsset]:
     """Read prepared-file snapshots in one query; omit missing IDs for caller diagnostics.
 
-    This does not claim owners or commit. Mutating callers must lock/recheck files
-    in their publication transaction before claiming them.
+    This does not claim owners or commit. Publication requests for_update=True
+    to lock/recheck files in ascending ID order (to avoid deadlocks) before claiming them.
     """
     if not file_ids:
         return {}
-    records = db.execute(
-        select(
-            StoredFile.id, StoredFile.kind, StoredFile.book_id, StoredFile.section_id, StoredFile.file_metadata
-        ).where(StoredFile.id.in_(file_ids))
+    query = (
+        select(StoredFile.id, StoredFile.kind, StoredFile.book_id, StoredFile.section_id, StoredFile.file_metadata)
+        .where(StoredFile.id.in_(file_ids))
+        .order_by(StoredFile.id)
     )
+    if for_update:
+        query = query.with_for_update()
+    records = db.execute(query)
     return {
         file_id: PreparedAsset(file_id, kind, book_id, section_id, MappingProxyType(dict(metadata)))
         for file_id, kind, book_id, section_id, metadata in records

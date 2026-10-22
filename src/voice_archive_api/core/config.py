@@ -37,6 +37,7 @@ class Settings(BaseSettings):
     upload_max_bytes: PositiveInt | None = None
     cover_max_bytes: PositiveInt = 25 * 1024 * 1024
     pdf_max_bytes: PositiveInt = 1_500_000_000
+    audio_max_bytes: PositiveInt = 1_500_000_000
 
     @property
     def database_url(self) -> URL:

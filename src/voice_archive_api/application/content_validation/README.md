@@ -11,9 +11,10 @@ documentation can be reviewed together.
 
 ## Canonical book content v1
 
-Phase 08 supplies the database model and validation library. Phase 09 supplies
-MP3 preparation, atomic import/dry-run, manifest/purge endpoints, and the CLI.
-There is no content mutation endpoint in this phase.
+Phase 08 supplies the database model and validation library. Implemented phase 09
+supplies MP3 preparation, atomic import/dry-run, manifest/purge endpoints, and the
+CLI. See the [publication guide](../../domain/content/README.md). Individual
+sections/segments have no mutation endpoint; corrections require purge/import.
 
 Start with [example.v1.json](docs/example.v1.json) and [schema.v1.json](docs/schema.v1.json).
 The synthetic example includes front matter, nested and empty sections, headings,
@@ -201,7 +202,8 @@ source categories to the closed kinds, source IDs to keys, one-based physical pa
 to zero-based indexes, top-left point boxes to normalized displayed coordinates,
 and seconds to integer milliseconds by an explicit rounding policy. Preserve all
 96 multi-page blocks and passive alignment diagnostics. Chapter file IDs become
-section linking instructions. Canonical adaptation and uploads remain phase 09.
+section linking instructions. Phase 09's local sample adapter performs this
+conversion using explicit uploaded file IDs; see the publication guide.
 Do not restore the omitted signup page; retain the existing formatting report.
 
 A local manual check on 2026-10-22 validated all 2,611 supplied non-null HTML
