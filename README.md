@@ -21,16 +21,26 @@ The API starts at [localhost:8000](http://localhost:8000), with interactive
 [OpenAPI contract](http://localhost:8000/openapi.json). Re-run the Compose command
 after code or dependency changes; Compose does not enable hot reload.
 
-| API | Purpose |
-| --- | --- |
-| `/api/v1/books` and `/{id}` | Create, list, retrieve, update, and delete books |
-| `/api/v1/files/{kind}` | Upload and prepare a `cover`, `source_pdf`, or `audio_chapter` MP3 |
-| `/api/v1/books/{id}/content-imports` | Atomic canonical import, with optional dry-run |
-| `/api/v1/books/{id}/content` | Content manifest/ETag and conditional PDF/audio/text purge |
+| API                                           | Purpose                                                              |
+| --------------------------------------------- | -------------------------------------------------------------------- |
+| `/api/v1/books` and `/{id}`                   | Create, list, retrieve, update, and delete books                     |
+| `/api/v1/files/{kind}`                        | Upload and prepare a `cover`, `source_pdf`, or `audio_chapter` MP3   |
+| `/api/v1/books/{id}/content-imports`          | Atomic canonical import, with optional dry-run                       |
+| `/api/v1/books/{id}/content`                  | Content manifest/ETag and conditional PDF/audio/text purge           |
 | `/api/v1/books/{id}/sections` and `/segments` | If-Content-Version-pinned reads with integer offset/limit pagination |
-| `/api/v1/files/{id}` | GET/HEAD delivery with native byte ranges; DELETE unlinked files |
-| `/api/v1/health` | Liveness without database access |
-| `/api/v1/ready` | Database readiness; used by Compose |
+| `/api/v1/files/{id}`                          | GET/HEAD delivery with native byte ranges; DELETE unlinked files     |
+| `/api/v1/health`                              | Liveness without database access                                     |
+| `/api/v1/ready`                               | Database readiness; used by Compose                                  |
+| `/api/v1/live/token`                          | POST a single-use ephemeral Gemini Live credential (no-store)        |
+
+For Live conversation, set `VOICE_ARCHIVE_GEMINI_API_KEY` on the backend only
+and restart it. `VOICE_ARCHIVE_GEMINI_LIVE_MODEL` defaults to `gemini-3.8-live`,
+which supports later asynchronous tools. No tools or app/book context are sent yet.
+The browser connects directly to Gemini and needs HTTPS (or localhost), microphone
+permission and working audio output. Start/Stop Live is the microphone icon at the
+top left. Entering/browsing a reader preserves Live; Play stops it before narration.
+Starting Live pauses narration. Stop releases capture/output; starting again creates
+a new conversation. Session resumption is not implemented in 14.1.
 
 Upload files first, then link their returned IDs through an explicit book
 create/save. Upload responses contain `id`, `kind`, `byte_size`, `metadata`, and
@@ -105,8 +115,7 @@ if another fails. Without `--once`, selected jobs run independently on their sch
 ## Errors, request IDs, and OpenAPI
 
 Application errors use `{"error":{"code":"...","message":"..."}}`; validation
-errors also include `issues`. Unexpected errors return a generic `internal_error`
-500. Native file-range errors and the readiness response retain their existing
+errors also include `issues`. Unexpected errors return a generic `internal_error` 500. Native file-range errors and the readiness response retain their existing
 contracts. HEAD responses have no body.
 Unregistered application errors also use the generic JSON 500 envelope;
 contract tests require every application error code to have a registered status
@@ -230,15 +239,15 @@ Credentials stay in the ignored environment files, outside the saved configurati
 
 Under [src/voice_archive_api](src/voice_archive_api/), code is grouped by responsibility:
 
-| Package | Responsibility |
-| --- | --- |
-| `logic/` | Pure rules, validation, transformations, enums, and data snapshots; no database, service, HTTP, or storage implementation imports |
-| `services/` | Book/content/file operations, database transactions, file preparation and cleanup; service input/result schemas stay with each capability |
-| `db/models/` | SQLAlchemy models in `book.py`, `content.py`, and `file.py`; the package registers complete metadata for sessions and Alembic |
-| `api/` | HTTP routes and error handling; HTTP response schemas live in `api/schemas/` |
-| `cli/` | Local commands calling services directly |
-| `file_handling/` | Storage and streaming mechanics |
-| `core/` and `db/` | Configuration, dependencies, logging, and database resources |
+| Package           | Responsibility                                                                                                                            |
+| ----------------- | ----------------------------------------------------------------------------------------------------------------------------------------- |
+| `logic/`          | Pure rules, validation, transformations, enums, and data snapshots; no database, service, HTTP, or storage implementation imports         |
+| `services/`       | Book/content/file operations, database transactions, file preparation and cleanup; service input/result schemas stay with each capability |
+| `db/models/`      | SQLAlchemy models in `book.py`, `content.py`, and `file.py`; the package registers complete metadata for sessions and Alembic             |
+| `api/`            | HTTP routes and error handling; HTTP response schemas live in `api/schemas/`                                                              |
+| `cli/`            | Local commands calling services directly                                                                                                  |
+| `file_handling/`  | Storage and streaming mechanics                                                                                                           |
+| `core/` and `db/` | Configuration, dependencies, logging, and database resources                                                                              |
 
 `main.py` wires the application together. APIs/CLI call services; services load
 and lock data, call pure logic, and persist the results. Pure logic receives values

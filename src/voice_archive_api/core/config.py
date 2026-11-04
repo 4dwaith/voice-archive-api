@@ -38,6 +38,8 @@ class Settings(BaseSettings):
     cover_max_bytes: PositiveInt = 25 * 1024 * 1024
     pdf_max_bytes: PositiveInt = 1_500_000_000
     audio_max_bytes: PositiveInt = 1_500_000_000
+    gemini_api_key: SecretStr | None = None
+    gemini_live_model: str = Field(default="gemini-3.8-live", min_length=1)
 
     @property
     def database_url(self) -> URL:

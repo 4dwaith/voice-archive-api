@@ -13,6 +13,7 @@ from voice_archive_api.logic.content_validation.validation import ContentValidat
 logger = logging.getLogger(__name__)
 
 APPLICATION_ERROR_STATUSES = {
+    "live_unavailable": 503,
     "book_not_found": 404,
     "duplicate_book": 409,
     "file_not_found": 404,
