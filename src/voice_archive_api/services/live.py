@@ -30,6 +30,9 @@ async def create_live_token(settings: Settings) -> str:
                         uses=1,
                         expire_time=now + timedelta(minutes=30),
                         new_session_expire_time=now + timedelta(minutes=1),
+                        # Lock only supplied fields; the default locks the whole setup,
+                        # silently overriding client resumption/compression settings.
+                        lock_additional_fields=[],
                         live_connect_constraints=types.LiveConnectConstraints(
                             model=settings.gemini_live_model,
                             config=types.LiveConnectConfig(response_modalities=[types.Modality.AUDIO]),

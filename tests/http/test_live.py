@@ -1,9 +1,10 @@
+import json
 from datetime import UTC, datetime, timedelta
 from unittest.mock import AsyncMock, MagicMock
 
 import httpx
 import pytest
-from google.genai import errors, types
+from google.genai import Client, errors, types
 from pydantic import SecretStr
 
 
@@ -49,6 +50,33 @@ def test_live_token_is_single_use_constrained_and_not_cached(schema_only_client,
     assert config.expire_time - config.new_session_expire_time == timedelta(minutes=29)
     client.aio.__aexit__.assert_awaited_once()
     client.__exit__.assert_called_once()
+
+
+def test_live_token_locks_only_model_and_audio_in_sdk_request(schema_only_client, monkeypatch):
+    schema_only_client.app.state.settings.gemini_api_key = SecretStr("server-secret")
+    requests = []
+
+    def handle_request(request):
+        requests.append(request)
+        return httpx.Response(200, json={"name": "auth_tokens/temporary"})
+
+    def create_test_client(*, api_key, http_options):
+        http_options.httpx_async_client = httpx.AsyncClient(transport=httpx.MockTransport(handle_request))
+        return Client(api_key=api_key, http_options=http_options)
+
+    monkeypatch.setattr("voice_archive_api.services.live.genai.Client", create_test_client)
+
+    response = schema_only_client.post("/api/v1/live/token")
+
+    assert response.status_code == 200
+    assert len(requests) == 1
+    assert requests[0].url.path == "/v1beta/auth_tokens"
+    payload = json.loads(requests[0].content)
+    assert set(payload["fieldMask"].split(",")) == {"model", "generationConfig.responseModalities"}
+    assert payload["bidiGenerateContentSetup"] == {
+        "model": f"models/{schema_only_client.app.state.settings.gemini_live_model}",
+        "generationConfig": {"responseModalities": ["AUDIO"]},
+    }
 
 
 def test_live_without_configuration_is_unavailable(schema_only_client, mock_gemini_client):
