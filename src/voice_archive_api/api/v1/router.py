@@ -11,10 +11,12 @@ from voice_archive_api.api.v1.books import router as books_router
 from voice_archive_api.api.v1.content import router as content_router
 from voice_archive_api.api.v1.files import router as files_router
 from voice_archive_api.api.v1.live import router as live_router
+from voice_archive_api.api.v1.series import router as series_router
 from voice_archive_api.db.session import get_db
 
 router = APIRouter()
 router.include_router(books_router)
+router.include_router(series_router)
 router.include_router(content_router)
 router.include_router(files_router)
 router.include_router(live_router)

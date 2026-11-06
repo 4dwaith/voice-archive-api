@@ -9,7 +9,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from voice_archive_api.core.errors import ApplicationError
-from voice_archive_api.db.constants import UNIQUE_BOOK_IDENTITY
+from voice_archive_api.db.constants import FOREIGN_KEY_BOOK_SERIES, UNIQUE_BOOK_IDENTITY, UNIQUE_BOOK_SERIES_INDEX
 from voice_archive_api.db.models.book import Book
 from voice_archive_api.db.models.file import StoredFile
 from voice_archive_api.logic.books.validation import normalize_identity
@@ -17,6 +17,7 @@ from voice_archive_api.logic.files import FileKind
 from voice_archive_api.services.book_cleanup import delete_book_content_and_files
 from voice_archive_api.services.books.schemas import BookCreate, BookPatch
 from voice_archive_api.services.files import service as file_service
+from voice_archive_api.services.series.service import SeriesNotFound, SeriesOrderConflict, get_series
 
 
 class BookNotFound(ApplicationError):
@@ -67,14 +68,56 @@ def book_write(db: Session) -> Iterator[None]:
             )
             errors = {
                 UNIQUE_BOOK_IDENTITY: DuplicateBook,
+                FOREIGN_KEY_BOOK_SERIES: SeriesNotFound,
+                UNIQUE_BOOK_SERIES_INDEX: SeriesOrderConflict,
             }
             if constraint is not None and (error := errors.get(constraint)):
                 raise error from exc
         raise
 
 
-def check_file_links(db: Session, changes: dict[str, Any]) -> None:
-    """Only persisted, successfully prepared files can be linked to a book."""
+def lock_book_for_series_write(db: Session, book_id: int, changes: dict[str, Any]) -> Book | None:
+    # Read membership before taking locks, then recheck it after locking parents
+    # in ID order and the book. Never acquire a series lock while holding a book lock.
+    snapshot = db.execute(select(Book.series_id).where(Book.id == book_id)).one_or_none()
+    if snapshot is None:
+        return None
+    source_id = snapshot[0]
+    target_id = changes.get("series_id", source_id)
+    for series_id in sorted({value for value in (source_id, target_id) if value is not None}):
+        get_series(db, series_id, for_update=True)
+    book = get_book(db, book_id, for_update=True)
+    if book.series_id != source_id:
+        raise SeriesOrderConflict
+    return book
+
+
+def validate_series_membership(db: Session, book: Book | None, changes: dict[str, Any]) -> None:
+    source_id = book.series_id if book else None
+    source_index = book.series_index if book else None
+    target_id = changes.get("series_id", source_id)
+    if target_id == source_id:
+        if changes.get("series_index", source_index) != source_index:
+            raise SeriesOrderConflict
+        return
+    if source_id is not None and source_index != db.scalar(
+        select(func.count()).select_from(Book).where(Book.series_id == source_id)
+    ):
+        raise SeriesOrderConflict
+    expected_index = (
+        None
+        if target_id is None
+        else 1 + (db.scalar(select(func.count()).select_from(Book).where(Book.series_id == target_id)) or 0)
+    )
+    if changes.get("series_index", expected_index) != expected_index:
+        raise SeriesOrderConflict
+    changes.update(series_id=target_id, series_index=expected_index)
+
+
+def check_book_links(db: Session, changes: dict[str, Any]) -> None:
+    """Validate referenced series and persisted, successfully prepared files."""
+    if (series_id := changes.get("series_id")) is not None:
+        get_series(db, series_id)
     for kind, field in file_service.BOOK_FILE_FIELDS.items():
         if (file_id := changes.get(field)) is not None:
             file_service.get_file(db, file_id, expected_kind=kind)
@@ -117,7 +160,12 @@ def create_book(db: Session, payload: BookCreate) -> Book:
         author = normalize_identity(payload.author)
         check_duplicate(db, title, author)
         changes = payload.model_dump()
-        check_file_links(db, changes)
+        if "series_index" not in payload.model_fields_set:
+            changes.pop("series_index")
+        if payload.series_id is not None:
+            get_series(db, payload.series_id, for_update=True)
+        validate_series_membership(db, None, changes)
+        check_book_links(db, changes)
         now = datetime.now(UTC)
         book = Book(
             **{field: value for field, value in changes.items() if field not in file_service.BOOK_FILE_FIELDS.values()},
@@ -138,8 +186,11 @@ def create_book(db: Session, payload: BookCreate) -> Book:
 
 def patch_book(db: Session, book_id: int, payload: BookPatch) -> Book:
     with book_write(db):
-        book = get_book(db, book_id, for_update=True)
         changes = payload.model_dump()
+        book = lock_book_for_series_write(db, book_id, changes)
+        if book is None:
+            raise BookNotFound
+        validate_series_membership(db, book, changes)
         if (
             "source_pdf_file_id" in changes
             and changes["source_pdf_file_id"] != book.source_pdf_file_id
@@ -152,7 +203,7 @@ def patch_book(db: Session, book_id: int, payload: BookPatch) -> Book:
         title = normalize_identity(changes.get("title", book.title))
         author = normalize_identity(changes.get("author", book.author))
         check_duplicate(db, title, author, exclude_id=book.id)
-        check_file_links(db, changes)
+        check_book_links(db, changes)
         now = datetime.now(UTC)
 
         for kind, field in file_service.BOOK_FILE_FIELDS.items():
@@ -188,9 +239,10 @@ def patch_book(db: Session, book_id: int, payload: BookPatch) -> Book:
 def delete_book(db: Session, book_id: int) -> bool:
     """Idempotent service operation; HTTP decides whether absence is a 404."""
     with book_write(db):
-        book = db.get(Book, book_id, with_for_update=True, populate_existing=True)
+        book = lock_book_for_series_write(db, book_id, {"series_id": None})
         if book is None:
             return False
+        validate_series_membership(db, book, {"series_id": None})
         delete_book_content_and_files(db, book_id, include_cover=True)
         db.delete(book)
         db.commit()

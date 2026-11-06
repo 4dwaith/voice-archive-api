@@ -23,6 +23,9 @@ class Book(TypedDict):
     description: str | None
     cover_file_id: int | None
     source_pdf_file_id: int | None
+    series_index: int | None
+    series_id: int | None
+    series_title: str | None
     cover_url: str | None
     source_pdf_url: str | None
     created_at: str
@@ -315,6 +318,9 @@ def generated_values(state):
         "updated_at",
         "cover_file_id",
         "source_pdf_file_id",
+        "series_id",
+        "series_index",
+        "series_title",
         "cover_url",
         "source_pdf_url",
     }

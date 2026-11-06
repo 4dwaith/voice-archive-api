@@ -15,6 +15,8 @@ logger = logging.getLogger(__name__)
 APPLICATION_ERROR_STATUSES = {
     "live_unavailable": 503,
     "book_not_found": 404,
+    "series_not_found": 404,
+    "series_order_conflict": 409,
     "duplicate_book": 409,
     "file_not_found": 404,
     "file_already_linked": 409,

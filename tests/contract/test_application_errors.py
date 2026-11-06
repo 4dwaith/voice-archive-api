@@ -52,6 +52,7 @@ def test_all_application_error_subclasses_have_http_statuses(openapi_document):
 def test_all_application_error_codes_are_documented_at_their_status_in_domain_routes(openapi_document):
     route_families = {
         "voice_archive_api.services.live": "/api/v1/live",
+        "voice_archive_api.services.series": "/api/v1/series",
         "voice_archive_api.services.books": "/api/v1/books",
         "voice_archive_api.services.content": "/api/v1/books",
         "voice_archive_api.services.files": "/api/v1/files",

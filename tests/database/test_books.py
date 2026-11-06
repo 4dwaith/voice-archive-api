@@ -247,5 +247,7 @@ def test_upgrade_from_first_book_revision_preserves_existing_books(test_engine, 
     with Session(test_engine) as db:
         book = db.get(Book, book_id)
         assert book is not None
+        assert book.series_id is None
+        assert book.series_title is None
         for field, expected in values.items():
             assert getattr(book, field) == expected, field

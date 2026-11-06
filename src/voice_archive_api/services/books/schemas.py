@@ -33,6 +33,7 @@ Language = Annotated[
     ),
     AfterValidator(validate_language),
 ]
+SeriesIndex = Annotated[int, Field(strict=True, gt=0, le=2_147_483_647)]
 FileId = Annotated[int, Field(strict=True, gt=0, le=9_223_372_036_854_775_807)]
 
 
@@ -45,6 +46,8 @@ class BookCreate(BaseModel):
     description: Description | None = None
     cover_file_id: FileId | None = None
     source_pdf_file_id: FileId | None = None
+    series_id: FileId | None = None
+    series_index: SeriesIndex | None = None
 
 
 class BookPatch(BaseModel):
@@ -58,6 +61,8 @@ class BookPatch(BaseModel):
     description: Description | None | MISSING = MISSING
     cover_file_id: FileId | None | MISSING = MISSING
     source_pdf_file_id: FileId | None | MISSING = MISSING
+    series_id: FileId | None | MISSING = MISSING
+    series_index: SeriesIndex | None | MISSING = MISSING
 
 
 class BookResponse(BaseModel):
@@ -70,6 +75,9 @@ class BookResponse(BaseModel):
     description: Description | None
     cover_file_id: FileId | None
     source_pdf_file_id: FileId | None
+    series_id: FileId | None
+    series_title: Title | None
+    series_index: SeriesIndex | None
     created_at: datetime
     updated_at: datetime
 

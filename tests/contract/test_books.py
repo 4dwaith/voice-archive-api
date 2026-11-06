@@ -4,6 +4,7 @@ import pytest
 from pydantic import ValidationError
 
 from voice_archive_api.services.books.schemas import BookCreate, BookPatch
+from voice_archive_api.services.series.schemas import SeriesCreate, SeriesPatch
 
 from .helpers import assert_operation_contract, assert_request_body_contract
 
@@ -25,8 +26,8 @@ def test_openapi_preserves_unicode_length_constraints(openapi_document, model, f
             "create_api_v1_book",
             {
                 "201": "BookResponse",
-                "404": "FileErrorResponse",
-                "409": "BookErrorResponse",
+                "404": ["FileErrorResponse", "SeriesErrorResponse"],
+                "409": ["BookErrorResponse", "SeriesErrorResponse"],
                 "422": ["ValidationErrorResponse", "FileErrorResponse"],
             },
         ),
@@ -48,8 +49,8 @@ def test_openapi_preserves_unicode_length_constraints(openapi_document, model, f
             "patch_api_v1_book",
             {
                 "200": "BookResponse",
-                "404": ["BookErrorResponse", "FileErrorResponse"],
-                "409": "BookErrorResponse",
+                "404": ["BookErrorResponse", "FileErrorResponse", "SeriesErrorResponse"],
+                "409": ["BookErrorResponse", "SeriesErrorResponse"],
                 "422": ["ValidationErrorResponse", "FileErrorResponse"],
             },
         ),
@@ -57,7 +58,12 @@ def test_openapi_preserves_unicode_length_constraints(openapi_document, model, f
             "/api/v1/books/{book_id}",
             "delete",
             "delete_api_v1_book",
-            {"204": None, "404": "BookErrorResponse", "422": "ValidationErrorResponse"},
+            {
+                "204": None,
+                "404": "BookErrorResponse",
+                "409": ["BookErrorResponse", "SeriesErrorResponse"],
+                "422": "ValidationErrorResponse",
+            },
         ),
     ],
     ids=["create", "list", "retrieve", "update", "delete"],
@@ -99,10 +105,10 @@ def test_patch_rejects_uneditable_fields():
         BookPatch(id=1)
 
 
-@pytest.mark.parametrize("field", ["cover_file_id", "source_pdf_file_id"])
+@pytest.mark.parametrize("field", ["cover_file_id", "source_pdf_file_id", "series_id", "series_index"])
 @pytest.mark.parametrize("model", [BookCreate, BookPatch])
 @pytest.mark.parametrize("value", [0, -1, 9_223_372_036_854_775_808, True, 1.5, "1"])
-def test_file_link_ids_reject_invalid_values(model, field, value):
+def test_link_ids_reject_invalid_values(model, field, value):
     base = {"title": "Book", "language": "en"} if model is BookCreate else {}
     with pytest.raises(ValidationError):
         model(**base, **{field: value})
@@ -159,3 +165,9 @@ def test_pagination_requires_integer_query_values(client, field, value):
     body = response.json()
     assert body["error"]["code"] == "validation_error"
     assert any(issue["location"] == ["query", field] for issue in body["issues"])
+
+
+@pytest.mark.parametrize("model", [SeriesCreate, SeriesPatch])
+def test_series_titles_reject_nul_characters(model):
+    with pytest.raises(ValidationError):
+        model(title="bad\x00title")

@@ -6,6 +6,7 @@ from sqlalchemy.orm import Session
 from voice_archive_api.api.schemas.books import BookErrorResponse
 from voice_archive_api.api.schemas.errors import ValidationErrorResponse
 from voice_archive_api.api.schemas.files import FileErrorResponse
+from voice_archive_api.api.schemas.series import SeriesErrorResponse
 from voice_archive_api.db.models.book import Book
 from voice_archive_api.db.session import get_db
 from voice_archive_api.services.books import service
@@ -30,14 +31,14 @@ BookId = Annotated[int, Path(gt=0, le=9_223_372_036_854_775_807)]
 missing_book: dict[int | str, dict[str, Any]] = {404: {"model": BookErrorResponse, "description": "Book not found"}}
 missing_file: dict[int | str, dict[str, Any]] = {
     404: {
-        "model": FileErrorResponse,
-        "description": "Referenced prepared file not found",
+        "model": FileErrorResponse | SeriesErrorResponse,
+        "description": "Referenced prepared file or series not found",
     }
 }
 missing_book_or_file: dict[int | str, dict[str, Any]] = {
     404: {
-        "model": BookErrorResponse | FileErrorResponse,
-        "description": "Book or referenced prepared file not found",
+        "model": BookErrorResponse | FileErrorResponse | SeriesErrorResponse,
+        "description": "Book, referenced prepared file or series not found",
     }
 }
 invalid_file_link: dict[int | str, dict[str, Any]] = {
@@ -45,8 +46,8 @@ invalid_file_link: dict[int | str, dict[str, Any]] = {
 }
 conflict: dict[int | str, dict[str, Any]] = {
     409: {
-        "model": BookErrorResponse,
-        "description": "Duplicate title and author, or a cover/PDF already linked to another book",
+        "model": BookErrorResponse | SeriesErrorResponse,
+        "description": "Invalid series order, duplicate title and author, or a cover/PDF already linked to another book",
     }
 }
 
@@ -103,7 +104,7 @@ def patch_book(book_id: BookId, payload: BookPatch, db: Database) -> Book:
     "/{book_id}",
     status_code=204,
     operation_id="delete_api_v1_book",
-    responses=missing_book,
+    responses=missing_book | conflict,
     response_class=Response,
 )
 def delete_book(book_id: BookId, db: Database) -> Response:

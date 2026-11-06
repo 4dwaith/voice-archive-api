@@ -3,11 +3,10 @@
 from datetime import UTC, datetime
 from uuid import uuid4
 
-from sqlalchemy import select, text
+from sqlalchemy import MetaData, Table, select, text
 from sqlalchemy.orm import Session
 
 from alembic import command
-from tests.database.files.test_file_ownership import add_book
 from voice_archive_api.db.models.book import Book
 from voice_archive_api.db.models.content import BookSection
 
@@ -15,11 +14,27 @@ from voice_archive_api.db.models.content import BookSection
 def test_section_sequence_backfill_preserves_nested_order_and_content_version(test_engine, migration_config):
     command.downgrade(migration_config, "0012_content_domain")
     version = uuid4()
+    historical_books = Table("books", MetaData(), autoload_with=test_engine)
+    now = datetime.now(UTC)
     with Session(test_engine) as db:
-        book = add_book(db)
-        other = add_book(db, "Other")
-        book.content_version, book.content_schema_version, book.content_imported_at = version, 1, datetime.now(UTC)
-        book_id, other_id = book.id, other.id
+        book_id, other_id = [
+            db.scalar(
+                historical_books.insert()
+                .values(
+                    title=title,
+                    normalized_title=title.lower(),
+                    normalized_author="",
+                    language="en",
+                    created_at=now,
+                    updated_at=now,
+                    content_version=version,
+                    content_schema_version=1,
+                    content_imported_at=now,
+                )
+                .returning(historical_books.c.id)
+            )
+            for title in ["Owner", "Other"]
+        ]
         # Sibling values have gaps; IDs and insertion order do not define reading order.
         for row_id, owner_book_id, key, parent, sibling in [
             (10, book_id, "later", None, 20),

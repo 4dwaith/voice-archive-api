@@ -24,6 +24,7 @@ after code or dependency changes; Compose does not enable hot reload.
 | API                                           | Purpose                                                              |
 | --------------------------------------------- | -------------------------------------------------------------------- |
 | `/api/v1/books` and `/{id}`                   | Create, list, retrieve, update, and delete books                     |
+| `/api/v1/series` and `/{id}` | Create, list, read, rename and delete series |
 | `/api/v1/files/{kind}`                        | Upload and prepare a `cover`, `source_pdf`, or `audio_chapter` MP3   |
 | `/api/v1/books/{id}/content-imports`          | Atomic canonical import, with optional dry-run                       |
 | `/api/v1/books/{id}/content`                  | Content manifest/ETag and conditional PDF/audio/text purge           |
@@ -41,6 +42,29 @@ permission and working audio output. Start/Stop Live is the microphone icon at t
 top left. Entering/browsing a reader preserves Live; Play stops it before narration.
 Starting Live pauses narration. Stop releases capture/output; starting again creates
 a new conversation. Session resumption is not implemented in 14.1.
+
+Books expose nullable `series_id`, `series_title` and `series_index`. Positions
+are 1-based and continuous. Book POST/PATCH appends a new member when its index
+is omitted; an explicit index must be the next position. PATCH omission preserves
+membership; null `series_id` clears both membership and index. Only the last
+member can leave, move to another series or be deleted through book operations.
+Writes that would leave gaps or change an occupied position return 409.
+
+`PUT /api/v1/series/{id}/books` accepts the complete ordered array of book IDs,
+for example `[12, 4, 9]`. It reorders/assigns positions atomically, detaches omitted
+members and accepts unassigned books. An empty array clears membership. Duplicate,
+missing or foreign-series books reject the whole request with 409. Unknown series
+IDs return 404. Series detail returns `book_ids` in series order; series lists
+retain ascending ID order and the book pagination limits.
+
+Series titles retain display whitespace and use book title limits; duplicate
+series titles are allowed. API deletion of a series atomically detaches all its
+books without changing canonical content versions, media or files. Migration
+`0015_series_order` backfills existing memberships in their prior book-ID order
+and adds pairing/positive-position/deferred-unique constraints. Its restricted FK
+requires explicit detachment before direct series deletion. Membership writes lock
+series rows before book rows and revalidate after waiting. Catalog refresh updates
+saved metadata normally; content reimport is unnecessary.
 
 Upload files first, then link their returned IDs through an explicit book
 create/save. Upload responses contain `id`, `kind`, `byte_size`, `metadata`, and
