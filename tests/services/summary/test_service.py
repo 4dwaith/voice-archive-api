@@ -72,7 +72,7 @@ def test_batched_roots_keep_full_context_and_carry_earlier_summaries(
         result = {
             "summaries": [
                 GeneratedSummary(
-                    kind=target["kind"], id=target["id"], language="en", summary="A traveller describes a journey."
+                    kind=target["kind"], id=target["id"], summary="A traveller describes a journey."
                 ).model_dump()
                 for target in json.loads(parts[1])["TARGETS"]
             ]
@@ -143,7 +143,6 @@ def test_generation_failure_retains_accepted_set_and_version(client, summary_boo
                     GeneratedSummary(
                         kind=target["kind"],
                         id=target["id"],
-                        language="en",
                         summary="A staged replacement summary.",
                         english_translation="A replacement translation." if target["kind"] == "segment" else None,
                     )
@@ -208,7 +207,6 @@ def test_cleared_run_stops_before_another_provider_request(client, summary_book,
                 GeneratedSummary(
                     kind=target["kind"],
                     id=target["id"],
-                    language="en",
                     summary="A traveller returns home.",
                     english_translation="He came home to see his mother." if target["kind"] == "segment" else None,
                 )
@@ -241,7 +239,6 @@ def test_summary_generation_succeeds_with_only_batch_key(client, summary_book, m
                 GeneratedSummary(
                     kind=target["kind"],
                     id=target["id"],
-                    language="en",
                     summary="A traveller returns home.",
                     english_translation="He came home to see his mother." if target["kind"] == "segment" else None,
                 )

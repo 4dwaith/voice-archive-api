@@ -28,7 +28,7 @@ SUMMARY_INSTRUCTIONS = (
     "Leave unidentified speakers unidentified; preserve attribution, uncertainty, names and important terms faithfully. "
     "Do not invent identity mappings between names or epithets. Copy target kind and ID exactly. "
     "For a section with no passages, describe only its supplied heading and absence of text. "
-    "Return language en. Do not omit, duplicate or add targets. "
+    "Do not return a language field. All summaries must be in English. Do not omit, duplicate or add targets. "
     "SOURCE.language is the resolved primary book language. For every segment TARGET when it is not en, also return "
     "english_translation: a faithful English translation of that entire canonical passage, not a summary. "
     "Preserve all details, names, important terms, attribution, uncertainty and the passage's order. "
@@ -53,7 +53,6 @@ class SummaryTarget(BaseModel):
 class GeneratedSummary(SummaryTarget):
     model_config = ConfigDict(extra="forbid", strict=True)
 
-    language: Literal["en"]
     summary: str
     english_translation: str | None = None
 

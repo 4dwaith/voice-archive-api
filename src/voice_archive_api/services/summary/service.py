@@ -526,16 +526,38 @@ async def generate_and_publish_summaries(
                         drafts.extend(result.summaries)
                         break
                     except BookTooLargeError as exc:
+                        logger.exception(
+                            "Summary input exceeds model limit: run=%s book=%s target=%s:%s batch=%s/%s attempt=%s/%s",
+                            generation_input.run_id,
+                            generation_input.book_id,
+                            summary_input.source_target.kind,
+                            summary_input.source_target.id,
+                            batch_index,
+                            len(batches),
+                            attempt + 1,
+                            retries + 1,
+                        )
                         raise ValueError(
                             f"{summary_input.source_target.kind} {summary_input.source_target.id}: complete canonical context exceeds the model input limit"
                         ) from exc
                     except (errors.APIError, httpx.HTTPError, TimeoutError, ValueError) as exc:
+                        logger.exception(
+                            "Summary generation attempt failed: run=%s book=%s target=%s:%s batch=%s/%s attempt=%s/%s",
+                            generation_input.run_id,
+                            generation_input.book_id,
+                            summary_input.source_target.kind,
+                            summary_input.source_target.id,
+                            batch_index,
+                            len(batches),
+                            attempt + 1,
+                            retries + 1,
+                        )
                         # A cache must not make a generation retry depend on the
                         # same unavailable/expired provider resource.
                         cache = None
                         if attempt == retries:
                             raise ValueError(
-                                f"{summary_input.source_target.kind} {summary_input.source_target.id}: generation failed; check provider configuration/availability and retry"
+                                f"{summary_input.source_target.kind} {summary_input.source_target.id}: generation failed; see the logged exception for details"
                             ) from exc
         if isinstance(summary_input, RootSectionSummaryInput):
             earlier_root_summaries.append(

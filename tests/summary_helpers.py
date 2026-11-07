@@ -39,7 +39,6 @@ def create_summary_drafts(generation_input):
     return [
         GeneratedSummary(
             **target.model_dump(),
-            language="en",
             summary=f"The {target.kind} describes a return home.",
             english_translation=(
                 "He came home to see his mother."

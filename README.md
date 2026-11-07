@@ -323,8 +323,15 @@ book summaries directly through the CLI (no API server is required):
 ```powershell
 uv run --env-file .env summarize-book generate --book-id 34
 uv run --env-file .env summarize-book generate --book-id 34 --root-section-id 120
+uv run --env-file .env summarize-book generate --book-id 34 --root-section-id 120 --log-level DEBUG
 uv run --env-file .env summarize-book clear --book-id 34
 ```
+
+Summary generation logs failed attempts with their original exception tracebacks
+to stderr. Use `--log-level DEBUG` to also log complete model responses before
+validation, including responses that fail validation. This enables DEBUG logging
+for `voice_archive_api` while keeping third-party libraries at WARNING. The
+default application log level is INFO; model responses are not logged at that level.
 
 `--root-section-id` selects one root section belonging to the book. It generates
 and atomically publishes that root's entire subtree, including nested section and

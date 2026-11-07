@@ -119,7 +119,6 @@ def mock_summary_provider(client, summary_case, monkeypatch):
                 GeneratedSummary(
                     kind=target["kind"],
                     id=target["id"],
-                    language="en",
                     summary="He returned home to see his mother.",
                     english_translation=(
                         "He came home to see his mother."

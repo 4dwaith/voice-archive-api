@@ -3,6 +3,7 @@
 import argparse
 import asyncio
 import json
+import logging
 import sys
 
 from pydantic_settings.exceptions import SettingsError
@@ -23,7 +24,15 @@ def run(argv: list[str] | None = None) -> int:
         "--allow-stale-downstream", action="store_true", help="Allow existing later summaries to become stale"
     )
     parser.add_argument("--retries", type=int, choices=range(3), default=1)
+    parser.add_argument(
+        "--log-level",
+        choices=["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"],
+        default="INFO",
+        help="Application log level; DEBUG includes complete model responses",
+    )
     args = parser.parse_args(argv)
+    logging.basicConfig(level=logging.WARNING)
+    logging.getLogger("voice_archive_api").setLevel(args.log_level)
     if not 0 < args.book_id <= 9_223_372_036_854_775_807:
         parser.error("Use a positive book ID within the PostgreSQL BIGINT range")
     if args.root_section_id is not None and not 0 < args.root_section_id <= 9_223_372_036_854_775_807:

@@ -1,6 +1,7 @@
 """Bounded Gemini SDK calls, including counting the complete generation request."""
 
 import asyncio
+import logging
 
 from google import genai
 from google.genai import types
@@ -14,6 +15,8 @@ from voice_archive_api.logic.library import (
     format_book_evidence,
     format_question,
 )
+
+logger = logging.getLogger(__name__)
 
 
 class BookTooLargeError(ValueError):
@@ -105,6 +108,12 @@ async def generate_structured_output[Output: BaseModel](
                 if total > min(input_limit, settings.gemini_answer_input_tokens):
                     raise BookTooLargeError
                 generated = await async_client.models.generate_content(model=model, contents=contents, config=config)
+                logger.debug(
+                    "Complete model response: model=%s output_type=%s response=%s",
+                    model,
+                    output_type.__name__,
+                    generated.model_dump_json(),
+                )
                 candidates = generated.candidates or []
                 if len(candidates) != 1 or candidates[0].finish_reason != types.FinishReason.STOP:
                     raise ValueError("Incomplete or blocked answer")
