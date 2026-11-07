@@ -1,14 +1,13 @@
-"""Canonical summary targets and strict English-output validation."""
+"""Canonical summary targets and structural output validation."""
 
 import json
-import unicodedata
 from hashlib import sha256
 from typing import Literal
 from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, field_validator
 
-POLICY = "reader-context-english-v5"
+POLICY = "reader-context-english-v6"
 # A conservative working response size, not the model's advertised output limit.
 SUMMARY_RESPONSE_TARGET_TOKENS = 6000
 SUMMARY_INSTRUCTIONS = (
@@ -31,7 +30,7 @@ SUMMARY_INSTRUCTIONS = (
     "Do not invent identity mappings between names or epithets. Copy target kind and ID exactly. "
     "For a section with no passages, describe only its supplied heading and absence of text. "
     "Return language en. Do not omit, duplicate or add targets. "
-    "For every segment TARGET when SOURCE.language has a primary language subtag other than en, also return "
+    "SOURCE.language is the resolved primary book language. For every segment TARGET when it is not en, also return "
     "english_translation: a faithful English translation of that entire canonical passage, not a summary. "
     "Preserve all details, names, important terms, attribution, uncertainty and the passage's order. "
     "Earlier context may disambiguate meaning, but never add explanations, replace pronouns with inferred names, "
@@ -70,11 +69,9 @@ class SummaryDraft(SummaryTarget):
 
     @field_validator("summary")
     @classmethod
-    def validate_english_prose(cls, value: str) -> str:
-        letters = [character for character in value if character.isalpha()]
-        latin = sum("LATIN" in unicodedata.name(character, "") for character in letters)
-        if not letters or latin <= len(letters) / 2 or "\x00" in value or len(value) > 8000:
-            raise ValueError("Expected usable English prose, allowing source-language names")
+    def validate_summary_text(cls, value: str) -> str:
+        if not value.strip() or "\x00" in value or len(value) > 8000:
+            raise ValueError("Expected a nonempty summary of at most 8000 characters")
         return value.strip()
 
 
@@ -178,19 +175,15 @@ def build_summary_scopes(book_id: int, fragments: list[SourceFragment]) -> list[
     return scopes
 
 
-def requires_english_translation(source_language: str | None) -> bool:
-    return source_language is not None and source_language.lower().split("-", 1)[0] != "en"
-
-
-def validate_summary_translations(drafts: list[SummaryDraft], source_language: str | None) -> None:
+def validate_summary_translations(drafts: list[SummaryDraft], *, translate_passages: bool) -> None:
     for draft in drafts:
-        required = draft.kind == "segment" and requires_english_translation(source_language)
+        required = draft.kind == "segment" and translate_passages
         if (draft.english_translation is not None) != required:
             raise ValueError("English translations are required only for non-English passage targets")
 
 
 def split_summary_targets(
-    targets: list[SummaryTarget], fragments: list[SourceFragment], *, source_language: str | None = "en"
+    targets: list[SummaryTarget], fragments: list[SourceFragment], *, translate_passages: bool = False
 ) -> list[list[SummaryTarget]]:
     passage_lengths = {fragment.id: len(fragment.text) for fragment in fragments if fragment.kind == "passage"}
     batches: list[list[SummaryTarget]] = []
@@ -202,7 +195,7 @@ def split_summary_targets(
             if target.kind == "segment"
             else {"section": 256, "book": 320}[target.kind]
         )
-        if target.kind == "segment" and requires_english_translation(source_language):
+        if target.kind == "segment" and translate_passages:
             # Uncapped translation allowance: full passages grow beyond summary length.
             estimate += 64 + passage_lengths[target.id] // 2
         if not batches or tokens + estimate > SUMMARY_RESPONSE_TARGET_TOKENS:

@@ -19,6 +19,7 @@ from voice_archive_api.core.config import Settings
 from voice_archive_api.db.models.book import Book
 from voice_archive_api.db.models.content import BookSection, BookSegment
 from voice_archive_api.db.models.summary import SummaryRun
+from voice_archive_api.logic.books.validation import resolve_primary_language
 from voice_archive_api.logic.summaries import (
     POLICY,
     SUMMARY_INSTRUCTIONS,
@@ -51,9 +52,14 @@ class SummarySnapshot:
     run_id: UUID
     source_fingerprint: str
     metadata: dict[str, str | None]
+    primary_language: str
     fragments: list[SourceFragment]
     membership: tuple[int | None, int | None]
     previous_books: list[PreviousBookSummary]
+
+    @property
+    def is_passage_translation_required(self) -> bool:
+        return self.primary_language != "en"
 
 
 def lock_summary_book(db: Session, book_id: int) -> Book:
@@ -85,6 +91,7 @@ def read_previous_book_summaries(db: Session, book: Book) -> list[PreviousBookSu
 
 
 def read_summary_source(db: Session, book: Book, run_id: UUID) -> SummarySnapshot:
+    primary_language = resolve_primary_language(book.language)
     sections = [
         SourceFragment(id=row.id, parent_id=row.parent_id, kind="section", text=row.title)
         for row in db.scalars(select(BookSection).where(BookSection.book_id == book.id).order_by(BookSection.sequence))
@@ -98,7 +105,9 @@ def read_summary_source(db: Session, book: Book, run_id: UUID) -> SummarySnapsho
     previous_books = read_previous_book_summaries(db, book)
     fragments = order_source_fragments(sections, passages)
     fingerprint = compute_summary_source_fingerprint(metadata, fragments, membership, previous_books)
-    return SummarySnapshot(book.id, run_id, fingerprint, metadata, fragments, membership, previous_books)
+    return SummarySnapshot(
+        book.id, run_id, fingerprint, metadata, primary_language, fragments, membership, previous_books
+    )
 
 
 def start_summary_run(factory: sessionmaker[Session], book_id: int, model: str) -> SummarySnapshot | UUID:
@@ -173,7 +182,7 @@ def publish_book_summaries(
     factory: sessionmaker[Session], snapshot: SummarySnapshot, drafts: list[SummaryDraft]
 ) -> UUID:
     validate_summary_coverage(build_summary_targets(snapshot.book_id, snapshot.fragments), drafts)
-    validate_summary_translations(drafts, snapshot.metadata["language"])
+    validate_summary_translations(drafts, translate_passages=snapshot.is_passage_translation_required)
     with factory.begin() as db:
         book = lock_summary_book(db, snapshot.book_id)
         run = db.get(SummaryRun, snapshot.run_id, with_for_update=True)
@@ -271,7 +280,7 @@ async def generate_and_publish_summaries(
         await run_in_threadpool(ensure_summary_run_is_active, factory, snapshot.run_id)
         source = format_summary_context(
             scope,
-            snapshot.metadata,
+            {**snapshot.metadata, "language": snapshot.primary_language},
             snapshot.previous_books,
             previous_roots if scope.target.kind == "section" else [],
             previous_scope if scope.target.kind == "section" else None,
@@ -281,7 +290,9 @@ async def generate_and_publish_summaries(
             scope.targets,
             key=lambda target: (end_indexes[(target.kind, target.id)], target.kind != "segment"),
         )
-        batches = split_summary_targets(ordered_targets, scope.fragments, source_language=snapshot.metadata["language"])
+        batches = split_summary_targets(
+            ordered_targets, scope.fragments, translate_passages=snapshot.is_passage_translation_required
+        )
         async with create_summary_cache(settings, SUMMARY_INSTRUCTIONS, source, enabled=len(batches) > 1) as cache:
             for batch_index, targets in enumerate(batches, start=1):
                 target_text = json.dumps(
@@ -310,7 +321,9 @@ async def generate_and_publish_summaries(
                             cached_content=cached_name,
                         )
                         validate_summary_coverage(targets, result.summaries)
-                        validate_summary_translations(result.summaries, snapshot.metadata["language"])
+                        validate_summary_translations(
+                            result.summaries, translate_passages=snapshot.is_passage_translation_required
+                        )
                         drafts.extend(result.summaries)
                         break
                     except BookTooLargeError as exc:

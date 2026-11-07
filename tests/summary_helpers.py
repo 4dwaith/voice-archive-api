@@ -4,7 +4,7 @@ from uuid import UUID
 
 import pytest
 
-from voice_archive_api.logic.summaries import SummaryDraft, build_summary_targets, requires_english_translation
+from voice_archive_api.logic.summaries import SummaryDraft, build_summary_targets
 from voice_archive_api.services.series import service as series
 from voice_archive_api.services.series.schemas import SeriesCreate
 from voice_archive_api.services.summary import service as summaries
@@ -40,7 +40,7 @@ def create_summary_drafts(snapshot):
             summary=f"The {target.kind} describes a return home.",
             english_translation=(
                 "He came home to see his mother."
-                if target.kind == "segment" and requires_english_translation(snapshot.metadata["language"])
+                if target.kind == "segment" and snapshot.is_passage_translation_required
                 else None
             ),
         )

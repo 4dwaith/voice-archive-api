@@ -17,6 +17,17 @@ Feature: Prepare English summaries for a published book
     When I generate summaries with the local command
     Then the command skips generation and preserves the published version
 
+  Scenario: English aliases do not request passage translations
+    Given the book declares the English alias eng
+    When I generate summaries with the local command
+    Then English summaries are available for the book, sections and passages
+    And the provider receives resolved English and provenance keeps the declared alias
+
+  Scenario: An unresolved book language prevents generation
+    Given the book declares the unresolved language "und"
+    When I generate summaries with the local command
+    Then the command requests a primary language before any provider work or run is created
+
   Scenario: Clear accepted summaries
     Given summaries have already been generated
     When I clear summaries with the local command

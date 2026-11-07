@@ -2,7 +2,7 @@
 
 import unicodedata
 
-from langcodes import tag_is_valid
+from langcodes import Language, tag_is_valid
 
 
 def normalize_identity(value: str | None) -> str:
@@ -54,3 +54,13 @@ def validate_language(value: str) -> str:
         raise ValueError("Language must be a recognized language code, such as en or kn")
 
     return value
+
+
+def resolve_primary_language(value: str | None) -> str:
+    """Resolve declared book language aliases for language-dependent preparation."""
+    if value is not None:
+        validate_language(value)
+        primary = Language.get(value).language
+        if primary is not None and primary not in {"mul", "mis", "zxx"}:
+            return primary
+    raise ValueError("Set a single primary book language before generating summaries")

@@ -338,12 +338,23 @@ reading order; provider-visible background has no IDs, version identifiers or ta
 The book summary uses full canonical book text. Background clarifies references;
 target summaries are not derived from child summaries. Progress goes to stderr,
 and stdout reports the resulting book ID/content version as JSON.
-For a book whose primary language subtag is not `en`, each passage target also
+Before preparing summaries, the existing `langcodes` parser resolves the declared
+`Book.language` to one primary language. English aliases such as `eng`, `en_US`
+and `en-US` resolve to `en`; the stored declaration is preserved for provenance.
+Unresolved declarations (`und`, `mul`, `mis`, `zxx`) require a single primary book
+language before any provider work or new run is created. The resolved language
+controls the prompt, translation allowance and required output consistently.
+For a book whose resolved primary language is not `en`, each passage target also
 produces a full faithful English translation in `segments.english_translation`.
 English-source passages and all book/section targets return no translation.
 Translations preserve detail, order, names, attribution and uncertainty; contextual
 clarification belongs in the separate summary. This internal field is stored for
 later retrieval preparation; current public content/Live response shapes are unchanged.
+Output checks enforce the English language declaration, target coverage, nonempty
+text, absence of NULs and the summary length limit. They do not guess language
+from script proportions or certify translation fidelity. Faithfulness and English
+prose remain prompt requirements, with representative human quality review when
+real provider checks are approved; no second-model judge is called automatically.
 Translation text adds an uncapped allowance of 64 tokens plus half the canonical
 passage character count to the working output estimate. This remains a heuristic;
 it does not prove actual output size or translation fidelity. A very long passage
@@ -378,8 +389,8 @@ This uses ordinary generation requests, not the asynchronous Batch API.
 Results stay in memory until the complete set, including every required passage
 translation, passes validation. Publication stores summaries and translations
 atomically and changes the book content version once; a clear removes both and
-changes the version when either was present. Policy `reader-context-english-v5`
-makes earlier summary-only runs eligible for regeneration. The new nullable field
+changes the version when either was present. Policy `reader-context-english-v6`
+makes earlier runs eligible for regeneration under the resolved-language policy. The nullable field
 requires migration `0017_passage_translations`. `book_summary_runs` records source fingerprints, running/completed/
 failed state, timestamps and model/policy/source-language provenance. Before any
 provider work, generation exits successfully if a job is already running or the

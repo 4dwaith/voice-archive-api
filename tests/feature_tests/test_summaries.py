@@ -7,7 +7,7 @@ import httpx
 import pytest
 from google.genai import Client, types
 from pydantic import SecretStr
-from pytest_bdd import given, scenarios, then, when
+from pytest_bdd import given, parsers, scenarios, then, when
 from sqlalchemy import select, text
 
 from voice_archive_api.cli import summaries as cli
@@ -27,10 +27,12 @@ def create_summary_case(summary_book):
         "version": version,
         "accepted": None,
         "requests": [],
+        "provider_requests": [],
         "counted_configs": [],
         "generated_configs": [],
         "reject": False,
         "omit_translation": False,
+        "translate_passages": True,
     }
 
 
@@ -58,6 +60,24 @@ def prepare_summary_book(client, summary_case):
     summary_case["before"] = read_summary_state(client, summary_case["book_id"])
 
 
+@given("the book declares the English alias eng")
+def prepare_english_book(client, summary_case):
+    with client.app.state.session_factory.begin() as db:
+        db.get(Book, summary_case["book_id"]).language = "eng"
+        passage = db.scalar(select(BookSegment).where(BookSegment.book_id == summary_case["book_id"]))
+        passage.text_content = "He came home to see his mother."
+        passage.html_content = "<p>He came home to see his mother.</p>"
+
+    summary_case["translate_passages"] = False
+
+
+@given(parsers.parse('the book declares the unresolved language "{language}"'))
+def prepare_unresolved_language(client, summary_case, language):
+    response = client.patch(f"/api/v1/books/{summary_case['book_id']}", json={"language": language})
+    assert response.status_code == 200
+    summary_case["before"] = read_summary_state(client, summary_case["book_id"])
+
+
 @given("the summary provider is available")
 def mock_summary_provider(client, summary_case, monkeypatch):
     client.app.state.settings.gemini_batch_api_key = SecretStr("provider-batch-secret")
@@ -65,6 +85,7 @@ def mock_summary_provider(client, summary_case, monkeypatch):
     factory = client.app.state.session_factory
 
     async def respond(request):
+        summary_case["provider_requests"].append(request.url.path)
         if request.url.path.endswith(":countTokens"):
             payload = json.loads(request.content)["generateContentRequest"]
             summary_case["counted_configs"].append(
@@ -102,7 +123,9 @@ def mock_summary_provider(client, summary_case, monkeypatch):
                     summary="He returned home to see his mother.",
                     english_translation=(
                         "He came home to see his mother."
-                        if target["kind"] == "segment" and not summary_case["omit_translation"]
+                        if target["kind"] == "segment"
+                        and summary_case["translate_passages"]
+                        and not summary_case["omit_translation"]
                         else None
                     ),
                 ).model_dump()
@@ -139,7 +162,28 @@ def verify_published_summaries(client, summary_case):
         assert collection["content_version"] == str(version)
         assert [row["summary"] for row in collection["items"]] == ["He returned home to see his mother."]
     with client.app.state.session_factory() as db:
-        assert db.scalar(select(BookSegment.english_translation)) == "He came home to see his mother."
+        translation = "He came home to see his mother." if summary_case["translate_passages"] else None
+        assert db.scalar(select(BookSegment.english_translation)) == translation
+
+
+@then("the provider receives resolved English and provenance keeps the declared alias")
+def verify_resolved_english_language(client, summary_case):
+    assert all(request["SOURCE"]["language"] == "en" for request in summary_case["requests"])
+    with client.app.state.session_factory() as db:
+        assert db.get(Book, summary_case["book_id"]).language == "eng"
+        assert db.scalar(select(SummaryRun.source_language)) == "eng"
+
+
+@then("the command requests a primary language before any provider work or run is created")
+def verify_unresolved_language_is_rejected(client, summary_case):
+    assert summary_case["exit_code"] == 1
+    assert "single primary book language" in summary_case["output"].err
+    assert not summary_case["output"].out
+    assert summary_case["provider_requests"] == []
+    assert summary_case["requests"] == summary_case["counted_configs"] == summary_case["generated_configs"] == []
+    assert read_summary_state(client, summary_case["book_id"]) == summary_case["before"]
+    with client.app.state.session_factory() as db:
+        assert db.scalar(select(SummaryRun.id)) is None
 
 
 @then("the previous content version is rejected by paginated reads")

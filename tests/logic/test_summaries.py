@@ -111,43 +111,42 @@ def test_translation_output_allowance_grows_with_the_full_passage():
     targets = [SummaryTarget(kind="segment", id=index) for index in range(3)]
     passages = [SourceFragment(id=index, parent_id=None, kind="passage", text="ಕ" * 8000) for index in range(3)]
 
-    translated_batches = split_summary_targets(targets, passages, source_language="kn-IN")
-    english_batches = split_summary_targets(targets, passages, source_language="en-US")
+    translated_batches = split_summary_targets(targets, passages, translate_passages=True)
+    english_batches = split_summary_targets(targets, passages, translate_passages=False)
 
     assert translated_batches == [[target] for target in targets]
     assert english_batches == [targets]
 
 
 @pytest.mark.parametrize(
-    "language,kind,translation",
+    "translate_passages,kind,translation",
     [
-        ("kn", "segment", "A complete translation."),
-        ("fr", "segment", "A complete translation."),
-        ("en-US", "segment", None),
-        ("kn", "section", None),
-        ("kn", "book", None),
+        (True, "segment", "A complete translation."),
+        (False, "segment", None),
+        (True, "section", None),
+        (True, "book", None),
     ],
 )
-def test_accepts_translation_only_for_non_english_passages(language, kind, translation):
+def test_accepts_translation_only_for_non_english_passages(translate_passages, kind, translation):
     draft = SummaryDraft(kind=kind, id=1, language="en", summary="A concise summary.", english_translation=translation)
 
-    validate_summary_translations([draft], language)
+    validate_summary_translations([draft], translate_passages=translate_passages)
 
 
 @pytest.mark.parametrize(
-    "language,kind,translation",
+    "translate_passages,kind,translation",
     [
-        ("kn-IN", "segment", None),
-        ("en", "segment", "Unnecessary translation."),
-        ("kn", "section", "Unnecessary translation."),
-        ("kn", "book", "Unnecessary translation."),
+        (True, "segment", None),
+        (False, "segment", "Unnecessary translation."),
+        (True, "section", "Unnecessary translation."),
+        (True, "book", "Unnecessary translation."),
     ],
 )
-def test_rejects_missing_or_unrequested_translations(language, kind, translation):
+def test_rejects_missing_or_unrequested_translations(translate_passages, kind, translation):
     draft = SummaryDraft(kind=kind, id=1, language="en", summary="A concise summary.", english_translation=translation)
 
     with pytest.raises(ValueError, match="translations"):
-        validate_summary_translations([draft], language)
+        validate_summary_translations([draft], translate_passages=translate_passages)
 
 
 @pytest.mark.parametrize("translation", ["  ", "Text\x00"])
@@ -163,7 +162,7 @@ def test_translation_preserves_full_passage_text(translation):
     )
 
     assert draft.english_translation == translation.strip()
-    validate_summary_translations([draft], "kn")
+    validate_summary_translations([draft], translate_passages=True)
 
 
 def test_target_cutoffs_follow_subtrees_and_passage_positions_with_overlapping_ids():
@@ -195,17 +194,18 @@ def test_target_cutoffs_follow_subtrees_and_passage_positions_with_overlapping_i
 
 
 @pytest.mark.parametrize(
-    "language,summary", [("kn", "An English sentence."), ("en", "ಕನ್ನಡ ಸಾರಾಂಶ."), ("en", "  "), ("en", "Text\x00")]
+    "language,summary", [("kn", "An English sentence."), ("en", "  "), ("en", "Text\x00"), ("en", "x" * 8001)]
 )
-def test_rejects_unusable_or_non_english_output(language, summary):
+def test_rejects_unusable_text_or_wrong_output_language_declaration(language, summary):
     with pytest.raises(ValueError):
         SummaryDraft(kind="book", id=7, language=language, summary=summary)
 
 
-def test_allows_original_names_in_english_prose():
-    result = SummaryDraft(kind="book", id=7, language="en", summary="  The narrator describes ಕೃಷ್ಣ with uncertainty.  ")
+@pytest.mark.parametrize("summary", ["The narrator describes ಕೃಷ್ಣ with uncertainty.", "ಕೃಷ್ಣ met ಅರ್ಜುನ."])
+def test_allows_original_names_in_english_prose(summary):
+    result = SummaryDraft(kind="book", id=7, language="en", summary=f"  {summary}  ")
 
-    assert result.summary == "The narrator describes ಕೃಷ್ಣ with uncertainty."
+    assert result.summary == summary
 
 
 @pytest.mark.parametrize("ids", [[], [7, 7], [8]])
