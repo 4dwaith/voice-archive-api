@@ -3,13 +3,14 @@
 import json
 import logging
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
+from hashlib import sha256
 from uuid import UUID, uuid4
 
 import httpx
 from google.genai import errors
-from sqlalchemy import select, update
+from sqlalchemy import or_, select, true, update
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session, sessionmaker
 from sqlalchemy.sql.elements import ColumnElement
@@ -18,20 +19,26 @@ from starlette.concurrency import run_in_threadpool
 from voice_archive_api.core.config import Settings
 from voice_archive_api.db.models.book import Book
 from voice_archive_api.db.models.content import BookSection, BookSegment
-from voice_archive_api.db.models.summary import SummaryRun
+from voice_archive_api.db.models.summary import SummaryGenerationRun
 from voice_archive_api.logic.books.validation import resolve_primary_language
 from voice_archive_api.logic.summaries import (
     POLICY,
     SUMMARY_INSTRUCTIONS,
-    BackgroundSummary,
-    PreviousBookSummary,
-    SourceFragment,
-    SummaryBatchDraft,
-    SummaryDraft,
-    build_summary_scopes,
+    BookContentFragment,
+    BookSummary,
+    BookSummaryInput,
+    GeneratedSummary,
+    RootSectionSummaryInput,
+    SectionSummary,
+    SummaryBatchResult,
+    SummaryTarget,
+    build_book_summary_input,
+    build_content_summary_targets,
+    build_root_section_summary_inputs,
     build_summary_targets,
-    compute_summary_source_fingerprint,
+    compute_summary_input_fingerprint,
     compute_summary_target_end_indexes,
+    format_summary_background_text,
     format_summary_context,
     order_source_fragments,
     split_summary_targets,
@@ -40,22 +47,34 @@ from voice_archive_api.logic.summaries import (
 )
 from voice_archive_api.services.books.service import BookNotFound, get_book, lock_book_for_series_write
 from voice_archive_api.services.library.provider import BookTooLargeError, generate_structured_output
-from voice_archive_api.services.summary.cache import create_summary_cache
+from voice_archive_api.services.summary.cache import create_summary_context_cache
 
 logger = logging.getLogger(__name__)
 RUN_TIMEOUT = timedelta(hours=4)
 
 
 @dataclass
-class SummarySnapshot:
+class SummaryGenerationInput:
+    """Source, context and run metadata captured before generation begins."""
+
     book_id: int
     run_id: UUID
-    source_fingerprint: str
-    metadata: dict[str, str | None]
+    input_fingerprint: str
+    book_metadata: dict[str, str | None]
     primary_language: str
-    fragments: list[SourceFragment]
-    membership: tuple[int | None, int | None]
-    previous_books: list[PreviousBookSummary]
+    source_fragments: list[BookContentFragment]
+    series_membership: tuple[int | None, int | None]
+    earlier_book_summaries: list[BookSummary]
+    root_section_id: int | None = None
+    allow_stale_downstream: bool = False
+    earlier_root_summaries: list[SectionSummary] = field(default_factory=list)
+    previous_root_text: str | None = None
+    downstream_blockers: list[str] = field(default_factory=list)
+
+    def build_targets(self) -> list[SummaryTarget]:
+        if self.root_section_id is None:
+            return build_summary_targets(self.book_id, self.source_fragments)
+        return build_content_summary_targets(self.source_fragments)
 
     @property
     def is_passage_translation_required(self) -> bool:
@@ -69,16 +88,14 @@ def lock_summary_book(db: Session, book_id: int) -> Book:
     return book
 
 
-def read_previous_book_summaries(db: Session, book: Book) -> list[PreviousBookSummary]:
+def read_earlier_book_summaries(db: Session, book: Book) -> list[BookSummary]:
     if book.series_id is None:
         return []
     assert book.series_index is not None
     return [
-        PreviousBookSummary(
+        BookSummary(
             id=row.id,
-            position=row.series_index,
             title=row.title,
-            content_version=row.content_version,
             summary=row.summary,
         )
         for row in db.scalars(
@@ -90,62 +107,215 @@ def read_previous_book_summaries(db: Session, book: Book) -> list[PreviousBookSu
     ]
 
 
-def read_summary_source(db: Session, book: Book, run_id: UUID) -> SummarySnapshot:
+def read_summary_source(
+    db: Session, book: Book, run_id: UUID, root_section_id: int | None = None, allow_stale_downstream: bool = False
+) -> SummaryGenerationInput:
     primary_language = resolve_primary_language(book.language)
+    section_rows = db.scalars(
+        select(BookSection).where(BookSection.book_id == book.id).order_by(BookSection.sequence)
+    ).all()
+    passage_rows = db.scalars(
+        select(BookSegment).where(BookSegment.book_id == book.id).order_by(BookSegment.sequence)
+    ).all()
     sections = [
-        SourceFragment(id=row.id, parent_id=row.parent_id, kind="section", text=row.title)
-        for row in db.scalars(select(BookSection).where(BookSection.book_id == book.id).order_by(BookSection.sequence))
+        BookContentFragment(id=row.id, parent_id=row.parent_id, kind="section", text=row.title) for row in section_rows
     ]
     passages = [
-        SourceFragment(id=row.id, parent_id=row.section_id, kind="passage", text=row.text_content)
-        for row in db.scalars(select(BookSegment).where(BookSegment.book_id == book.id).order_by(BookSegment.sequence))
+        BookContentFragment(id=row.id, parent_id=row.section_id, kind="passage", text=row.text_content)
+        for row in passage_rows
     ]
-    metadata = {"title": book.title, "author": book.author, "language": book.language}
-    membership = (book.series_id, book.series_index)
-    previous_books = read_previous_book_summaries(db, book)
-    fragments = order_source_fragments(sections, passages)
-    fingerprint = compute_summary_source_fingerprint(metadata, fragments, membership, previous_books)
-    return SummarySnapshot(
-        book.id, run_id, fingerprint, metadata, primary_language, fragments, membership, previous_books
+    book_metadata = {"title": book.title, "author": book.author, "language": book.language}
+    series_membership = (book.series_id, book.series_index)
+    earlier_book_summaries = read_earlier_book_summaries(db, book)
+    source_fragments = order_source_fragments(sections, passages)
+    blockers: list[str] = []
+
+    # Stays empty if you're running the summary for the whole book
+    earlier_root_summaries: list[SectionSummary] = []
+    previous_root_text: str | None = None
+
+    if root_section_id is not None:
+        root_section_inputs = build_root_section_summary_inputs(source_fragments)
+
+        selected_root_index = next(
+            # Find the input for the requested root section.
+            (
+                root_section_index
+                for root_section_index, root_section_input in enumerate(root_section_inputs)
+                if root_section_input.root_section_id == root_section_id
+            ),
+            None,
+        )
+        if selected_root_index is None:
+            raise ValueError("Root section must belong to the selected book and have no parent")
+
+        summaries = {row.id: row.summary for row in section_rows}
+        titles = {row.id: row.title for row in section_rows}
+        earlier_root_summaries = [
+            SectionSummary(
+                id=root_section_input.root_section_id,
+                title=titles[root_section_input.root_section_id],
+                summary=summaries[root_section_input.root_section_id],
+            )
+            for root_section_input in root_section_inputs[:selected_root_index]
+        ]
+
+        missing = [str(root.id) for root in earlier_root_summaries if not (root.summary or "").strip()]
+        # Retain IDs for actionable prerequisite errors without exposing them in prompts.
+        if missing:
+            raise ValueError(f"Missing earlier root summaries: {', '.join(missing)}")
+
+        previous_root_text = (
+            format_summary_background_text(root_section_inputs[selected_root_index - 1])
+            if selected_root_index
+            else None
+        )
+
+        summarized = {
+            *(("section", row.id) for row in section_rows if row.summary is not None),
+            *(("passage", row.id) for row in passage_rows if row.summary is not None),
+        }
+
+        blockers = [
+            f"root section {root_section_input.root_section_id}"
+            for root_section_input in root_section_inputs[selected_root_index + 1 :]
+            if any((fragment.kind, fragment.id) in summarized for fragment in root_section_input.source_fragments)
+        ]
+
+        # You only need source fragments for the selected root on this job
+        source_fragments = root_section_inputs[selected_root_index].source_fragments
+
+    if book.series_id is not None:
+        later_books = db.scalars(
+            select(Book)
+            .where(
+                Book.series_id == book.series_id,
+                Book.series_index > book.series_index,
+                or_(
+                    Book.summary.is_not(None),
+                    select(BookSection.id)
+                    .where(BookSection.book_id == Book.id, BookSection.summary.is_not(None))
+                    .exists(),
+                    select(BookSegment.id)
+                    .where(BookSegment.book_id == Book.id, BookSegment.summary.is_not(None))
+                    .exists(),
+                ),
+            )
+            .order_by(Book.series_index)
+        )
+        blockers.extend(f"book {row.id}" for row in later_books)
+
+    fingerprint = compute_summary_input_fingerprint(
+        book_metadata, source_fragments, series_membership, earlier_book_summaries
+    )
+
+    if root_section_id is not None:
+        fingerprint = sha256(
+            json.dumps(
+                [
+                    # If the summary for the whole book changed, then the summary for a single chapter should also change
+                    fingerprint,
+                    root_section_id,
+                    [root.model_dump() for root in earlier_root_summaries],
+                    previous_root_text,
+                ],
+                sort_keys=True,
+            ).encode()
+        ).hexdigest()
+
+    return SummaryGenerationInput(
+        book.id,
+        run_id,
+        fingerprint,
+        book_metadata,
+        primary_language,
+        source_fragments,
+        series_membership,
+        earlier_book_summaries,
+        root_section_id,
+        allow_stale_downstream,
+        earlier_root_summaries,
+        previous_root_text,
+        blockers,
     )
 
 
-def start_summary_run(factory: sessionmaker[Session], book_id: int, model: str) -> SummarySnapshot | UUID:
+def validate_summary_dependencies(generation_input: SummaryGenerationInput) -> None:
+    missing = [str(book.id) for book in generation_input.earlier_book_summaries if not (book.summary or "").strip()]
+    if missing:
+        raise ValueError(f"Missing earlier book summaries: {', '.join(missing)}")
+    if generation_input.downstream_blockers and not generation_input.allow_stale_downstream:
+        raise ValueError(
+            f"Later summaries exist: {', '.join(generation_input.downstream_blockers)}. "
+            "Use --allow-stale-downstream to accept potential staleness."
+        )
+
+
+def start_summary_run(
+    factory: sessionmaker[Session],
+    book_id: int,
+    model: str,
+    *,
+    root_section_id: int | None = None,
+    allow_stale_downstream: bool = False,
+) -> SummaryGenerationInput | UUID:
     with factory.begin() as db:
         book = lock_summary_book(db, book_id)
+
         if book.content_version is None:
             raise ValueError("Import canonical book text before generating summaries")
+
+        generation_input = read_summary_source(db, book, uuid4(), root_section_id, allow_stale_downstream)
+        validate_summary_dependencies(generation_input)
         now = datetime.now(UTC)
         running = db.scalars(
-            select(SummaryRun).where(SummaryRun.book_id == book_id, SummaryRun.state == "running")
+            select(SummaryGenerationRun).where(
+                SummaryGenerationRun.book_id == book_id, SummaryGenerationRun.state == "running"
+            )
         ).all()
+
         if any(run.started_at > now - RUN_TIMEOUT for run in running):
             return book.content_version
+
         for run in running:
             run.state, run.finished_at, run.failure_reason = "failed", now, "Run exceeded four hours"
-        snapshot = read_summary_source(db, book, uuid4())
+
         completed = db.scalar(
-            select(SummaryRun)
+            select(SummaryGenerationRun)
             .where(
-                SummaryRun.book_id == book_id,
-                SummaryRun.state == "completed",
+                SummaryGenerationRun.book_id == book_id,
+                SummaryGenerationRun.state == "completed",
+                or_(
+                    SummaryGenerationRun.root_section_id == root_section_id,
+                    SummaryGenerationRun.root_section_id.is_(None),
+                )
+                if root_section_id is not None
+                else true(),
             )
-            .order_by(SummaryRun.started_at.desc())
+            .order_by(SummaryGenerationRun.started_at.desc())
             .limit(1)
         )
         if (
-            book.summary is not None
+            (
+                book.summary
+                if root_section_id is None
+                else db.scalar(select(BookSection.summary).where(BookSection.id == root_section_id))
+            )
+            is not None
             and completed is not None
-            and completed.source_fingerprint == snapshot.source_fingerprint
+            and completed.root_section_id == root_section_id
+            and completed.input_fingerprint == generation_input.input_fingerprint
             and completed.model == model
             and completed.policy == POLICY
         ):
             return book.content_version
         db.add(
-            SummaryRun(
-                id=snapshot.run_id,
+            SummaryGenerationRun(
+                id=generation_input.run_id,
                 book_id=book_id,
-                source_fingerprint=snapshot.source_fingerprint,
+                root_section_id=root_section_id,
+                allow_stale_downstream=allow_stale_downstream,
+                input_fingerprint=generation_input.input_fingerprint,
                 state="running",
                 model=model,
                 policy=POLICY,
@@ -153,15 +323,15 @@ def start_summary_run(factory: sessionmaker[Session], book_id: int, model: str) 
                 started_at=now,
             )
         )
-        return snapshot
+        return generation_input
 
 
 def fail_summary_run(factory: sessionmaker[Session], run_id: UUID) -> None:
     try:
         with factory.begin() as db:
             db.execute(
-                update(SummaryRun)
-                .where(SummaryRun.id == run_id, SummaryRun.state == "running")
+                update(SummaryGenerationRun)
+                .where(SummaryGenerationRun.id == run_id, SummaryGenerationRun.state == "running")
                 .values(
                     state="failed",
                     finished_at=datetime.now(UTC),
@@ -174,27 +344,34 @@ def fail_summary_run(factory: sessionmaker[Session], run_id: UUID) -> None:
 
 def ensure_summary_run_is_active(factory: sessionmaker[Session], run_id: UUID) -> None:
     with factory() as db:
-        if db.scalar(select(SummaryRun.state).where(SummaryRun.id == run_id)) != "running":
+        if db.scalar(select(SummaryGenerationRun.state).where(SummaryGenerationRun.id == run_id)) != "running":
             raise ValueError("Summary run changed; stop generation")
 
 
 def publish_book_summaries(
-    factory: sessionmaker[Session], snapshot: SummarySnapshot, drafts: list[SummaryDraft]
+    factory: sessionmaker[Session], generation_input: SummaryGenerationInput, drafts: list[GeneratedSummary]
 ) -> UUID:
-    validate_summary_coverage(build_summary_targets(snapshot.book_id, snapshot.fragments), drafts)
-    validate_summary_translations(drafts, translate_passages=snapshot.is_passage_translation_required)
+    validate_summary_coverage(generation_input.build_targets(), drafts)
+    validate_summary_translations(drafts, translate_passages=generation_input.is_passage_translation_required)
     with factory.begin() as db:
-        book = lock_summary_book(db, snapshot.book_id)
-        run = db.get(SummaryRun, snapshot.run_id, with_for_update=True)
+        book = lock_summary_book(db, generation_input.book_id)
+        run = db.get(SummaryGenerationRun, generation_input.run_id, with_for_update=True)
         if (
             book.content_version is None
             or run is None
             or run.state != "running"
-            or run.book_id != snapshot.book_id
-            or run.source_fingerprint != snapshot.source_fingerprint
-            or read_summary_source(db, book, snapshot.run_id).source_fingerprint != snapshot.source_fingerprint
+            or run.book_id != generation_input.book_id
+            or run.root_section_id != generation_input.root_section_id
+            or run.allow_stale_downstream != generation_input.allow_stale_downstream
+            or run.input_fingerprint != generation_input.input_fingerprint
         ):
             raise ValueError("Book source, background or summary run changed; regenerate summaries")
+        current = read_summary_source(
+            db, book, generation_input.run_id, generation_input.root_section_id, generation_input.allow_stale_downstream
+        )
+        if current.input_fingerprint != generation_input.input_fingerprint:
+            raise ValueError("Book source or background changed; regenerate summaries")
+        validate_summary_dependencies(current)
         for kind, table in (("section", BookSection), ("segment", BookSegment)):
             rows = [
                 {
@@ -207,7 +384,8 @@ def publish_book_summaries(
             ]
             if rows:
                 db.execute(update(table), rows)
-        book.summary = next(draft.summary for draft in drafts if draft.kind == "book")
+        if generation_input.root_section_id is None:
+            book.summary = next(draft.summary for draft in drafts if draft.kind == "book")
         book.content_version = uuid4()
         book.updated_at = datetime.now(UTC)
         run.state, run.finished_at = "completed", book.updated_at
@@ -229,8 +407,8 @@ def clear_book_summaries(factory: sessionmaker[Session], book_id: int) -> UUID |
             )
             changed = cleared is not None or changed
         db.execute(
-            update(SummaryRun)
-            .where(SummaryRun.book_id == book_id, SummaryRun.state == "running")
+            update(SummaryGenerationRun)
+            .where(SummaryGenerationRun.book_id == book_id, SummaryGenerationRun.state == "running")
             .values(
                 state="failed",
                 finished_at=datetime.now(UTC),
@@ -250,15 +428,28 @@ async def generate_book_summaries(
     book_id: int,
     *,
     retries: int = 1,
+    root_section_id: int | None = None,
+    allow_stale_downstream: bool = False,
     report_progress: Callable[[str], None] = lambda message: None,
 ) -> UUID:
     if not 0 <= retries <= 2:
         raise ValueError("Use zero to two retries per batch")
-    prepared = await run_in_threadpool(start_summary_run, factory, book_id, settings.gemini_text_model)
+    prepared = await run_in_threadpool(
+        start_summary_run,
+        factory,
+        book_id,
+        settings.gemini_text_model,
+        root_section_id=root_section_id,
+        allow_stale_downstream=allow_stale_downstream,
+    )
     if isinstance(prepared, UUID):
         report_progress("Generation skipped: a run is active or summaries already match the source and policy")
         return prepared
     try:
+        if prepared.downstream_blockers:
+            report_progress(
+                "Allowing potentially stale downstream summaries: " + ", ".join(prepared.downstream_blockers)
+            )
         return await generate_and_publish_summaries(factory, settings, prepared, retries, report_progress)
     except BaseException:
         await run_in_threadpool(fail_summary_run, factory, prepared.run_id)
@@ -268,32 +459,40 @@ async def generate_book_summaries(
 async def generate_and_publish_summaries(
     factory: sessionmaker[Session],
     settings: Settings,
-    snapshot: SummarySnapshot,
+    generation_input: SummaryGenerationInput,
     retries: int,
     report_progress: Callable[[str], None],
 ) -> UUID:
-    scopes = build_summary_scopes(snapshot.book_id, snapshot.fragments)
-    drafts: list[SummaryDraft] = []
-    previous_roots: list[BackgroundSummary] = []
-    previous_scope = None
-    for index, scope in enumerate(scopes, start=1):
-        await run_in_threadpool(ensure_summary_run_is_active, factory, snapshot.run_id)
+    summary_inputs: list[RootSectionSummaryInput | BookSummaryInput] = [
+        *build_root_section_summary_inputs(generation_input.source_fragments)
+    ]
+    if generation_input.root_section_id is None:
+        summary_inputs.append(build_book_summary_input(generation_input.book_id, generation_input.source_fragments))
+    drafts: list[GeneratedSummary] = []
+    earlier_root_summaries = list(generation_input.earlier_root_summaries)
+    previous_root_text = generation_input.previous_root_text
+    for index, summary_input in enumerate(summary_inputs, start=1):
+        await run_in_threadpool(ensure_summary_run_is_active, factory, generation_input.run_id)
         source = format_summary_context(
-            scope,
-            {**snapshot.metadata, "language": snapshot.primary_language},
-            snapshot.previous_books,
-            previous_roots if scope.target.kind == "section" else [],
-            previous_scope if scope.target.kind == "section" else None,
+            summary_input,
+            {**generation_input.book_metadata, "language": generation_input.primary_language},
+            generation_input.earlier_book_summaries,
+            earlier_root_summaries if isinstance(summary_input, RootSectionSummaryInput) else [],
+            previous_root_text if isinstance(summary_input, RootSectionSummaryInput) else None,
         )
-        end_indexes = compute_summary_target_end_indexes(scope)
+        end_indexes = compute_summary_target_end_indexes(summary_input)
         ordered_targets = sorted(
-            scope.targets,
+            summary_input.targets,
             key=lambda target: (end_indexes[(target.kind, target.id)], target.kind != "segment"),
         )
         batches = split_summary_targets(
-            ordered_targets, scope.fragments, translate_passages=snapshot.is_passage_translation_required
+            ordered_targets,
+            summary_input.source_fragments,
+            translate_passages=generation_input.is_passage_translation_required,
         )
-        async with create_summary_cache(settings, SUMMARY_INSTRUCTIONS, source, enabled=len(batches) > 1) as cache:
+        async with create_summary_context_cache(
+            settings, SUMMARY_INSTRUCTIONS, source, enabled=len(batches) > 1
+        ) as cache:
             for batch_index, targets in enumerate(batches, start=1):
                 target_text = json.dumps(
                     {
@@ -304,31 +503,31 @@ async def generate_and_publish_summaries(
                     }
                 )
                 for attempt in range(retries + 1):
-                    await run_in_threadpool(ensure_summary_run_is_active, factory, snapshot.run_id)
+                    await run_in_threadpool(ensure_summary_run_is_active, factory, generation_input.run_id)
                     report_progress(
-                        f"{index}/{len(scopes)} {scope.target.kind} {scope.target.id}, "
+                        f"{index}/{len(summary_inputs)} {summary_input.source_target.kind} {summary_input.source_target.id}, "
                         f"batch {batch_index}/{len(batches)} ({len(targets)} targets), attempt {attempt + 1}"
                     )
                     try:
-                        cached_name = await cache.get_available_name() if cache else None
+                        provider_cache_name = await cache.get_available_name() if cache else None
                         result = await generate_structured_output(
                             settings,
                             SUMMARY_INSTRUCTIONS,
-                            [target_text] if cached_name else [source, target_text],
-                            SummaryBatchDraft,
+                            [target_text] if provider_cache_name else [source, target_text],
+                            SummaryBatchResult,
                             api_key=settings.effective_gemini_batch_api_key,
                             max_output_tokens=None,
-                            cached_content=cached_name,
+                            cached_content=provider_cache_name,
                         )
                         validate_summary_coverage(targets, result.summaries)
                         validate_summary_translations(
-                            result.summaries, translate_passages=snapshot.is_passage_translation_required
+                            result.summaries, translate_passages=generation_input.is_passage_translation_required
                         )
                         drafts.extend(result.summaries)
                         break
                     except BookTooLargeError as exc:
                         raise ValueError(
-                            f"{scope.target.kind} {scope.target.id}: complete canonical context exceeds the model input limit"
+                            f"{summary_input.source_target.kind} {summary_input.source_target.id}: complete canonical context exceeds the model input limit"
                         ) from exc
                     except (errors.APIError, httpx.HTTPError, TimeoutError, ValueError) as exc:
                         # A cache must not make a generation retry depend on the
@@ -336,16 +535,23 @@ async def generate_and_publish_summaries(
                         cache = None
                         if attempt == retries:
                             raise ValueError(
-                                f"{scope.target.kind} {scope.target.id}: generation failed; check provider configuration/availability and retry"
+                                f"{summary_input.source_target.kind} {summary_input.source_target.id}: generation failed; check provider configuration/availability and retry"
                             ) from exc
-        if scope.target.kind == "section":
-            previous_roots.append(
-                BackgroundSummary(
-                    title=next(f.text for f in scope.fragments if f.kind == "section" and f.id == scope.target.id),
+        if isinstance(summary_input, RootSectionSummaryInput):
+            earlier_root_summaries.append(
+                SectionSummary(
+                    id=summary_input.source_target.id,
+                    title=next(
+                        f.text
+                        for f in summary_input.source_fragments
+                        if f.kind == "section" and f.id == summary_input.source_target.id
+                    ),
                     summary=next(
-                        draft.summary for draft in drafts if draft.kind == "section" and draft.id == scope.target.id
+                        draft.summary
+                        for draft in drafts
+                        if draft.kind == "section" and draft.id == summary_input.source_target.id
                     ),
                 )
             )
-            previous_scope = scope
-    return await run_in_threadpool(publish_book_summaries, factory, snapshot, drafts)
+            previous_root_text = format_summary_background_text(summary_input)
+    return await run_in_threadpool(publish_book_summaries, factory, generation_input, drafts)

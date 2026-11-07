@@ -12,9 +12,9 @@ from sqlalchemy import select, text
 
 from voice_archive_api.cli import summaries as cli
 from voice_archive_api.db.models.book import Book
-from voice_archive_api.db.models.content import BookSegment
-from voice_archive_api.db.models.summary import SummaryRun
-from voice_archive_api.logic.summaries import SUMMARY_INSTRUCTIONS, SummaryDraft
+from voice_archive_api.db.models.content import BookSection, BookSegment
+from voice_archive_api.db.models.summary import SummaryGenerationRun
+from voice_archive_api.logic.summaries import SUMMARY_INSTRUCTIONS, GeneratedSummary
 
 scenarios("../features/summary")
 
@@ -111,12 +111,12 @@ def mock_summary_provider(client, summary_case, monkeypatch):
             assert book.summary == summary_case["accepted"]
         summary_case["requests"].append(json.loads(parts[0]))
         assert payload["systemInstruction"]["parts"][0]["text"] == SUMMARY_INSTRUCTIONS
-        assert "summary" not in parts[0]
+        assert "summary" not in json.loads(parts[0])["SOURCE"]
         if summary_case["reject"]:
             return httpx.Response(403, json={"error": {"message": "provider-batch-secret"}})
         result = {
             "summaries": [
-                SummaryDraft(
+                GeneratedSummary(
                     kind=target["kind"],
                     id=target["id"],
                     language="en",
@@ -171,7 +171,7 @@ def verify_resolved_english_language(client, summary_case):
     assert all(request["SOURCE"]["language"] == "en" for request in summary_case["requests"])
     with client.app.state.session_factory() as db:
         assert db.get(Book, summary_case["book_id"]).language == "eng"
-        assert db.scalar(select(SummaryRun.source_language)) == "eng"
+        assert db.scalar(select(SummaryGenerationRun.source_language)) == "eng"
 
 
 @then("the command requests a primary language before any provider work or run is created")
@@ -183,7 +183,7 @@ def verify_unresolved_language_is_rejected(client, summary_case):
     assert summary_case["requests"] == summary_case["counted_configs"] == summary_case["generated_configs"] == []
     assert read_summary_state(client, summary_case["book_id"]) == summary_case["before"]
     with client.app.state.session_factory() as db:
-        assert db.scalar(select(SummaryRun.id)) is None
+        assert db.scalar(select(SummaryGenerationRun.id)) is None
 
 
 @then("the previous content version is rejected by paginated reads")
@@ -225,7 +225,9 @@ def verify_unchanged_run_is_skipped(client, summary_case):
     assert len(summary_case["requests"]) == summary_case["request_count"]
     assert read_summary_state(client, summary_case["book_id"]) == summary_case["before"]
     with client.app.state.session_factory() as db:
-        runs = db.scalars(select(SummaryRun).where(SummaryRun.book_id == summary_case["book_id"])).all()
+        runs = db.scalars(
+            select(SummaryGenerationRun).where(SummaryGenerationRun.book_id == summary_case["book_id"])
+        ).all()
         assert len(runs) == 1
         assert runs[0].state == "completed"
         assert runs[0].finished_at is not None
@@ -278,3 +280,107 @@ def verify_failed_replacement(client, summary_case):
     assert read_summary_state(client, summary_case["book_id"]) == summary_case["before"]
     with client.app.state.session_factory() as db:
         assert db.scalar(select(BookSegment.english_translation)) == "He came home to see his mother."
+
+
+@given("the book has three root sections")
+def prepare_three_roots(client, summary_case, summary_roots):
+    book_id, roots = summary_roots
+    summary_case["roots"] = roots
+    with client.app.state.session_factory() as db:
+        summary_case["version"] = db.get(Book, book_id).content_version
+
+
+@when("I generate each root section in order with the local command")
+def generate_roots_in_order(summary_case, capsys):
+    summary_case["versions"] = [summary_case["version"]]
+    for root_id in summary_case["roots"]:
+        assert cli.run(["generate", "--book-id", str(summary_case["book_id"]), "--root-section-id", str(root_id)]) == 0
+        output = capsys.readouterr()
+        summary_case["version"] = UUID(json.loads(output.out)["content_version"])
+        summary_case["versions"].append(summary_case["version"])
+
+
+@then("each root is published under its own version with earlier context")
+def verify_sequential_roots(client, summary_case):
+    requests = summary_case["requests"]
+
+    assert len(set(summary_case["versions"])) == 4
+    assert len(requests) == 3
+    for index, request in enumerate(requests):
+        assert request["SOURCE"]["fragments"][0]["id"] == summary_case["roots"][index]
+        assert len(request["BACKGROUND"]["previous_roots"]) == index
+    assert requests[1]["BACKGROUND"]["previous_root_text"] == "first\n\nfirst"
+    assert requests[2]["BACKGROUND"]["previous_root_text"] == "second\n\nChild\n\nsecond"
+    with client.app.state.session_factory() as db:
+        assert db.get(Book, summary_case["book_id"]).summary is None
+        assert all(row.summary == "He returned home to see his mother." for row in db.scalars(select(BookSection)))
+        assert all(
+            row.english_translation == "He came home to see his mother." for row in db.scalars(select(BookSegment))
+        )
+    assert (
+        read_summary_state(client, summary_case["book_id"])[2]["items"][0]["summary"]
+        == "He returned home to see his mother."
+    )
+
+
+@given("the last root already has a summary")
+def prepare_later_summary(client, summary_case):
+    with client.app.state.session_factory.begin() as db:
+        db.get(BookSection, summary_case["roots"][-1]).summary = "Existing later summary"
+
+
+def generate_selected_root(summary_case, capsys, index, *, allow=False):
+    arguments = [
+        "generate",
+        "--book-id",
+        str(summary_case["book_id"]),
+        "--root-section-id",
+        str(summary_case["roots"][index]),
+    ]
+    if allow:
+        arguments.append("--allow-stale-downstream")
+    summary_case["exit_code"] = cli.run(arguments)
+    summary_case["output"] = capsys.readouterr()
+
+
+@when("I generate the second root section with the local command")
+def generate_second_root(summary_case, capsys):
+    generate_selected_root(summary_case, capsys, 1)
+
+
+@when("I generate the first root section with the local command")
+def generate_first_root(summary_case, capsys):
+    generate_selected_root(summary_case, capsys, 0)
+
+
+@when("I generate the first root section allowing stale downstream summaries")
+def generate_first_root_with_override(summary_case, capsys):
+    generate_selected_root(summary_case, capsys, 0, allow=True)
+
+
+@then("the command reports missing earlier roots without contacting the provider")
+def verify_missing_earlier_roots(client, summary_case):
+    assert summary_case["exit_code"] == 1
+    assert "Missing earlier root summaries" in summary_case["output"].err
+    assert summary_case["provider_requests"] == []
+    with client.app.state.session_factory() as db:
+        assert db.scalar(select(SummaryGenerationRun.id)) is None
+
+
+@then("the command reports later summaries without contacting the provider")
+def verify_later_summaries_block_generation(client, summary_case):
+    assert summary_case["exit_code"] == 1
+    assert "--allow-stale-downstream" in summary_case["output"].err
+    assert summary_case["provider_requests"] == []
+    with client.app.state.session_factory() as db:
+        assert db.scalar(select(SummaryGenerationRun.id)) is None
+
+
+@then("the first root is published and the later summary is preserved")
+def verify_override_preserves_downstream(client, summary_case):
+    assert summary_case["exit_code"] == 0
+    assert "Allowing potentially stale downstream summaries" in summary_case["output"].err
+    assert UUID(json.loads(summary_case["output"].out)["content_version"]) != summary_case["version"]
+    with client.app.state.session_factory() as db:
+        assert db.get(BookSection, summary_case["roots"][0]).summary == "He returned home to see his mother."
+        assert db.get(BookSection, summary_case["roots"][-1]).summary == "Existing later summary"

@@ -1,13 +1,13 @@
 from datetime import datetime
 from uuid import UUID
 
-from sqlalchemy import BigInteger, CheckConstraint, DateTime, ForeignKey, String, Text, Uuid
+from sqlalchemy import BigInteger, Boolean, CheckConstraint, DateTime, ForeignKey, String, Text, Uuid
 from sqlalchemy.orm import Mapped, mapped_column
 
 from voice_archive_api.db.base import Base
 
 
-class SummaryRun(Base):
+class SummaryGenerationRun(Base):
     __tablename__ = "book_summary_runs"
     __table_args__ = (
         CheckConstraint("state IN ('running', 'completed', 'failed')", name="summary_run_state"),
@@ -16,7 +16,11 @@ class SummaryRun(Base):
 
     id: Mapped[UUID] = mapped_column(Uuid, primary_key=True)
     book_id: Mapped[int] = mapped_column(BigInteger, ForeignKey("books.id", ondelete="CASCADE"), index=True)
-    source_fingerprint: Mapped[str] = mapped_column(String(64))
+    root_section_id: Mapped[int | None] = mapped_column(
+        BigInteger, ForeignKey("sections.id", name="fk_summary_run_root", ondelete="CASCADE")
+    )
+    allow_stale_downstream: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false")
+    input_fingerprint: Mapped[str] = mapped_column("source_fingerprint", String(64))
     state: Mapped[str] = mapped_column(Text)
     model: Mapped[str] = mapped_column(Text)
     policy: Mapped[str] = mapped_column(Text)

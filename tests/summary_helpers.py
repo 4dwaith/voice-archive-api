@@ -3,8 +3,11 @@
 from uuid import UUID
 
 import pytest
+from sqlalchemy import select
 
-from voice_archive_api.logic.summaries import SummaryDraft, build_summary_targets
+from voice_archive_api.db.models.content import BookSection
+from voice_archive_api.logic.summaries import GeneratedSummary
+from voice_archive_api.services.content.service import purge
 from voice_archive_api.services.series import service as series
 from voice_archive_api.services.series.schemas import SeriesCreate
 from voice_archive_api.services.summary import service as summaries
@@ -32,28 +35,74 @@ def create_summary_book(client):
     return book_id, UUID(response.json()["content_version"])
 
 
-def create_summary_drafts(snapshot):
+def create_summary_drafts(generation_input):
     return [
-        SummaryDraft(
+        GeneratedSummary(
             **target.model_dump(),
             language="en",
             summary=f"The {target.kind} describes a return home.",
             english_translation=(
                 "He came home to see his mother."
-                if target.kind == "segment" and snapshot.is_passage_translation_required
+                if target.kind == "segment" and generation_input.is_passage_translation_required
                 else None
             ),
         )
-        for target in build_summary_targets(snapshot.book_id, snapshot.fragments)
+        for target in generation_input.build_targets()
     ]
+
+
+@pytest.fixture(name="summary_roots")
+def create_summary_roots(client, summary_book):
+    book_id, version = summary_book
+    with client.app.state.session_factory() as db:
+        purge(db, book_id, f'"book-content-v1-{book_id}-content-{version}"')
+
+    response = client.post(
+        f"/api/v1/books/{book_id}/content-imports",
+        json={
+            "schema_version": 1,
+            "sections": [
+                {"source_key": key, "kind": "chapter", "title": key, "sibling_sequence": index}
+                for index, key in enumerate(["first", "second", "third"])
+            ]
+            + [
+                {
+                    "source_key": "child",
+                    "parent_source_key": "second",
+                    "kind": "section",
+                    "title": "Child",
+                    "sibling_sequence": 0,
+                }
+            ],
+            "segments": [
+                {
+                    "source_key": key,
+                    "sequence": index,
+                    "kind": "prose",
+                    "section_source_key": "child" if key == "second" else key,
+                    "html_content": f"<p>{key}</p>",
+                }
+                for index, key in enumerate(["first", "second", "third"])
+            ],
+        },
+    )
+    assert response.status_code == 200
+    with client.app.state.session_factory() as db:
+        roots = db.scalars(
+            select(BookSection.id)
+            .where(BookSection.book_id == book_id, BookSection.parent_id.is_(None))
+            .order_by(BookSection.sequence)
+        ).all()
+
+    return book_id, roots
 
 
 @pytest.fixture(name="summary_series")
 def create_summary_series(client, summary_book):
     earlier_id, _ = summary_book
     factory = client.app.state.session_factory
-    snapshot = summaries.start_summary_run(factory, earlier_id, "test-model")
-    summaries.publish_book_summaries(factory, snapshot, create_summary_drafts(snapshot))
+    generation_input = summaries.start_summary_run(factory, earlier_id, "test-model")
+    summaries.publish_book_summaries(factory, generation_input, create_summary_drafts(generation_input))
     current_id = client.post("/api/v1/books", json={"title": "Following", "language": "en"}).json()["id"]
     response = client.post(
         f"/api/v1/books/{current_id}/content-imports",

@@ -3,7 +3,6 @@
 import json
 from hashlib import sha256
 from typing import Literal
-from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, field_validator
 
@@ -39,7 +38,7 @@ SUMMARY_INSTRUCTIONS = (
 )
 
 
-class SourceFragment(BaseModel):
+class BookContentFragment(BaseModel):
     id: int
     parent_id: int | None
     kind: Literal["section", "passage"]
@@ -51,7 +50,7 @@ class SummaryTarget(BaseModel):
     id: int
 
 
-class SummaryDraft(SummaryTarget):
+class GeneratedSummary(SummaryTarget):
     model_config = ConfigDict(extra="forbid", strict=True)
 
     language: Literal["en"]
@@ -75,107 +74,141 @@ class SummaryDraft(SummaryTarget):
         return value.strip()
 
 
-class SummaryBatchDraft(BaseModel):
+class SummaryBatchResult(BaseModel):
     model_config = ConfigDict(extra="forbid", strict=True)
 
-    summaries: list[SummaryDraft]
+    summaries: list[GeneratedSummary]
 
 
-class PreviousBookSummary(BaseModel):
+class BookSummary(BaseModel):
     id: int
-    position: int
-    title: str
-    content_version: UUID | None
-    summary: str | None
-
-
-class BackgroundSummary(BaseModel):
     title: str
     summary: str | None
 
 
-class SummaryScope(BaseModel):
-    target: SummaryTarget
+class SectionSummary(BaseModel):
+    id: int
+    title: str
+    summary: str | None
+
+
+class RootSectionSummaryInput(BaseModel):
+    root_section_id: int
     targets: list[SummaryTarget]
-    fragments: list[SourceFragment]
+    source_fragments: list[BookContentFragment]
+
+    @property
+    def source_target(self) -> SummaryTarget:
+        return SummaryTarget(kind="section", id=self.root_section_id)
 
 
-def compute_summary_source_fingerprint(
-    metadata: dict[str, str | None],
-    fragments: list[SourceFragment],
-    membership: tuple[int | None, int | None],
-    previous_books: list[PreviousBookSummary],
+class BookSummaryInput(BaseModel):
+    book_id: int
+    targets: list[SummaryTarget]
+    source_fragments: list[BookContentFragment]
+
+    @property
+    def source_target(self) -> SummaryTarget:
+        return SummaryTarget(kind="book", id=self.book_id)
+
+
+def compute_summary_input_fingerprint(
+    book_metadata: dict[str, str | None],
+    source_fragments: list[BookContentFragment],
+    series_membership: tuple[int | None, int | None],
+    earlier_book_summaries: list[BookSummary],
 ) -> str:
     source = {
-        "metadata": metadata,
-        "fragments": [fragment.model_dump() for fragment in fragments],
-        "membership": membership,
-        "previous_books": [book.model_dump(exclude={"content_version"}) for book in previous_books],
+        "metadata": book_metadata,
+        "fragments": [fragment.model_dump() for fragment in source_fragments],
+        "membership": series_membership,
+        "previous_books": [book.model_dump() for book in earlier_book_summaries],
     }
     return sha256(json.dumps(source, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
 
 
-def build_summary_targets(book_id: int, fragments: list[SourceFragment]) -> list[SummaryTarget]:
+def build_summary_targets(book_id: int, source_fragments: list[BookContentFragment]) -> list[SummaryTarget]:
     return [
         SummaryTarget(kind="book", id=book_id),
-        *(SummaryTarget(kind="section" if f.kind == "section" else "segment", id=f.id) for f in fragments),
+        *build_content_summary_targets(source_fragments),
     ]
 
 
-def order_source_fragments(sections: list[SourceFragment], passages: list[SourceFragment]) -> list[SourceFragment]:
+def build_content_summary_targets(source_fragments: list[BookContentFragment]) -> list[SummaryTarget]:
+    return [
+        SummaryTarget(kind="section" if fragment.kind == "section" else "segment", id=fragment.id)
+        for fragment in source_fragments
+    ]
+
+
+def order_source_fragments(
+    sections: list[BookContentFragment], passages: list[BookContentFragment]
+) -> list[BookContentFragment]:
     section_indexes = {section.id: index for index, section in enumerate(sections)}
-    fragments: list[SourceFragment] = []
+    source_fragments: list[BookContentFragment] = []
     next_section_index = 0
     for passage in passages:
         if passage.parent_id is not None:
             section_index = section_indexes[passage.parent_id]
             while next_section_index <= section_index:
-                fragments.append(sections[next_section_index])
+                source_fragments.append(sections[next_section_index])
                 next_section_index += 1
-        fragments.append(passage)
-    fragments.extend(sections[next_section_index:])
-    return fragments
+        source_fragments.append(passage)
+    source_fragments.extend(sections[next_section_index:])
+    return source_fragments
 
 
-def build_summary_scopes(book_id: int, fragments: list[SourceFragment]) -> list[SummaryScope]:
-    sections = [fragment for fragment in fragments if fragment.kind == "section"]
-    parents = {section.id: section.parent_id for section in sections}
-    roots: dict[int | None, int | None] = {None: None}
-    for section in sections:
-        root_id = section.id
-        while (parent_id := parents[root_id]) is not None:
-            root_id = parent_id
-        roots[section.id] = root_id
-    scopes = []
-    for root in (section for section in sections if section.parent_id is None):
-        owned = [f for f in fragments if roots[f.id if f.kind == "section" else f.parent_id] == root.id]
-        scopes.append(
-            SummaryScope(
-                target=SummaryTarget(kind="section", id=root.id),
-                targets=build_summary_targets(book_id, owned)[1:],
-                fragments=owned,
+def build_root_section_summary_inputs(book_fragments: list[BookContentFragment]) -> list[RootSectionSummaryInput]:
+    """Build one input per root section, including its subtree in reading order."""
+    section_fragments = [fragment for fragment in book_fragments if fragment.kind == "section"]
+    parent_section_id_by_section_id = {fragment.id: fragment.parent_id for fragment in section_fragments}
+    root_section_id_by_section_id: dict[int, int] = {}
+
+    for section_fragment in section_fragments:
+        root_section_id = section_fragment.id
+        parent_section_id = parent_section_id_by_section_id[root_section_id]
+        while parent_section_id is not None:
+            root_section_id = parent_section_id
+            parent_section_id = parent_section_id_by_section_id[root_section_id]
+        root_section_id_by_section_id[section_fragment.id] = root_section_id
+
+    root_sections = [fragment for fragment in section_fragments if fragment.parent_id is None]
+    root_section_inputs = []
+    for root_section in root_sections:
+        subtree_fragments = []
+        for fragment in book_fragments:
+            section_id = fragment.id if fragment.kind == "section" else fragment.parent_id
+            if section_id is None:
+                continue
+            if root_section_id_by_section_id[section_id] == root_section.id:
+                subtree_fragments.append(fragment)
+
+        root_section_inputs.append(
+            RootSectionSummaryInput(
+                root_section_id=root_section.id,
+                targets=build_content_summary_targets(subtree_fragments),
+                source_fragments=subtree_fragments,
             )
         )
-    # Sectionless targets need book context; the book summary always uses full canonical text.
-    book_target = SummaryTarget(kind="book", id=book_id)
-    scopes.append(
-        SummaryScope(
-            target=book_target,
-            targets=[
-                book_target,
-                *(
-                    SummaryTarget(kind="segment", id=f.id)
-                    for f in fragments
-                    if f.kind == "passage" and f.parent_id is None
-                ),
-            ],
-            fragments=fragments,
-        )
+    return root_section_inputs
+
+
+def build_book_summary_input(book_id: int, book_fragments: list[BookContentFragment]) -> BookSummaryInput:
+    """Use full book text for the book summary and any sectionless passages."""
+    book_summary_target = SummaryTarget(kind="book", id=book_id)
+    sectionless_passage_targets = [
+        SummaryTarget(kind="segment", id=fragment.id)
+        for fragment in book_fragments
+        if fragment.kind == "passage" and fragment.parent_id is None
+    ]
+    return BookSummaryInput(
+        book_id=book_id,
+        targets=[book_summary_target, *sectionless_passage_targets],
+        source_fragments=book_fragments,
     )
-    return scopes
 
 
-def validate_summary_translations(drafts: list[SummaryDraft], *, translate_passages: bool) -> None:
+def validate_summary_translations(drafts: list[GeneratedSummary], *, translate_passages: bool) -> None:
     for draft in drafts:
         required = draft.kind == "segment" and translate_passages
         if (draft.english_translation is not None) != required:
@@ -183,9 +216,9 @@ def validate_summary_translations(drafts: list[SummaryDraft], *, translate_passa
 
 
 def split_summary_targets(
-    targets: list[SummaryTarget], fragments: list[SourceFragment], *, translate_passages: bool = False
+    targets: list[SummaryTarget], source_fragments: list[BookContentFragment], *, translate_passages: bool = False
 ) -> list[list[SummaryTarget]]:
-    passage_lengths = {fragment.id: len(fragment.text) for fragment in fragments if fragment.kind == "passage"}
+    passage_lengths = {fragment.id: len(fragment.text) for fragment in source_fragments if fragment.kind == "passage"}
     batches: list[list[SummaryTarget]] = []
     tokens = 0
     for target in targets:
@@ -206,11 +239,13 @@ def split_summary_targets(
     return batches
 
 
-def format_summary_background_text(scope: SummaryScope) -> str:
-    headings = {fragment.id: fragment.text for fragment in scope.fragments if fragment.kind == "section"}
+def format_summary_background_text(root_section_input: RootSectionSummaryInput) -> str:
+    headings = {
+        fragment.id: fragment.text for fragment in root_section_input.source_fragments if fragment.kind == "section"
+    }
     parts: list[str] = []
     previous_section_id = None
-    for fragment in scope.fragments:
+    for fragment in root_section_input.source_fragments:
         if fragment.kind == "section":
             previous_section_id = fragment.id
         else:
@@ -221,10 +256,14 @@ def format_summary_background_text(scope: SummaryScope) -> str:
     return "\n\n".join(parts)
 
 
-def compute_summary_target_end_indexes(scope: SummaryScope) -> dict[tuple[str, int], int]:
-    parents = {f.id: f.parent_id for f in scope.fragments if f.kind == "section"}
-    ends: dict[tuple[str, int], int] = {(scope.target.kind, scope.target.id): len(scope.fragments) - 1}
-    for index, fragment in enumerate(scope.fragments):
+def compute_summary_target_end_indexes(
+    summary_input: RootSectionSummaryInput | BookSummaryInput,
+) -> dict[tuple[str, int], int]:
+    parents = {f.id: f.parent_id for f in summary_input.source_fragments if f.kind == "section"}
+    ends: dict[tuple[str, int], int] = {
+        (summary_input.source_target.kind, summary_input.source_target.id): len(summary_input.source_fragments) - 1
+    }
+    for index, fragment in enumerate(summary_input.source_fragments):
         if fragment.kind == "passage":
             ends[("segment", fragment.id)] = index
         section_id = fragment.id if fragment.kind == "section" else fragment.parent_id
@@ -235,29 +274,29 @@ def compute_summary_target_end_indexes(scope: SummaryScope) -> dict[tuple[str, i
 
 
 def format_summary_context(
-    scope: SummaryScope,
-    metadata: dict[str, str | None],
-    previous_books: list[PreviousBookSummary],
-    previous_roots: list[BackgroundSummary],
-    previous_scope: SummaryScope | None,
+    summary_input: RootSectionSummaryInput | BookSummaryInput,
+    book_metadata: dict[str, str | None],
+    earlier_book_summaries: list[BookSummary],
+    earlier_root_summaries: list[SectionSummary],
+    previous_root_text: str | None,
 ) -> str:
     return json.dumps(
         {
             "BACKGROUND": {
-                "previous_books": [{"title": book.title, "summary": book.summary} for book in previous_books],
-                "previous_roots": [root.model_dump() for root in previous_roots],
-                "previous_root_text": format_summary_background_text(previous_scope) if previous_scope else None,
+                "previous_books": [{"title": book.title, "summary": book.summary} for book in earlier_book_summaries],
+                "previous_roots": [{"title": root.title, "summary": root.summary} for root in earlier_root_summaries],
+                "previous_root_text": previous_root_text,
             },
             "SOURCE": {
-                **metadata,
-                "fragments": [fragment.model_dump() for fragment in scope.fragments],
+                **book_metadata,
+                "fragments": [fragment.model_dump() for fragment in summary_input.source_fragments],
             },
         },
         ensure_ascii=False,
     )
 
 
-def validate_summary_coverage(targets: list[SummaryTarget], drafts: list[SummaryDraft]) -> None:
+def validate_summary_coverage(targets: list[SummaryTarget], drafts: list[GeneratedSummary]) -> None:
     expected = {(target.kind, target.id) for target in targets}
     actual = [(draft.kind, draft.id) for draft in drafts]
     if len(actual) != len(expected) or set(actual) != expected:

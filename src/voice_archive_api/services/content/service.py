@@ -13,7 +13,7 @@ from sqlalchemy.orm import Session
 from voice_archive_api.core.errors import ApplicationError
 from voice_archive_api.db.models.content import BookSection, BookSegment
 from voice_archive_api.db.models.file import StoredFile
-from voice_archive_api.db.models.summary import SummaryRun
+from voice_archive_api.db.models.summary import SummaryGenerationRun
 from voice_archive_api.logic.content_validation.assets import referenced_file_ids, validate_assets
 from voice_archive_api.logic.content_validation.schemas import ContentInput, SectionInput
 from voice_archive_api.logic.content_validation.validation import (
@@ -217,8 +217,8 @@ def purge(db: Session, book_id: int, if_match: str | None) -> None:
         book.content_imported_at = None
         book.summary = None
         db.execute(
-            update(SummaryRun)
-            .where(SummaryRun.book_id == book_id, SummaryRun.state == "running")
+            update(SummaryGenerationRun)
+            .where(SummaryGenerationRun.book_id == book_id, SummaryGenerationRun.state == "running")
             .values(
                 state="failed",
                 finished_at=datetime.now(UTC),

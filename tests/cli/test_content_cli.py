@@ -60,7 +60,9 @@ def test_calls_service_once_with_validated_content_and_disposes_engine(monkeypat
     monkeypatch.setitem(content_import.__dict__, "create_session_factory", Mock(return_value=factory))
     publish = Mock(return_value=ImportResult(dry_run=True, section_count=1, segment_count=1, content_version=None))
     monkeypatch.setattr(content_import.service, "publish", publish)
+
     assert content_import.run(arguments + ["--dry-run"]) == 0
+
     assert publish.call_count == 1
     assert publish.call_args.args[:2] == (session, 7)
     assert publish.call_args.args[2].content.segments[0].text_content == "Text"
@@ -81,7 +83,9 @@ def test_direct_database_dry_run_publish_and_conflict(test_engine, monkeypatch, 
     arguments[1] = str(book_id)
     source = content_import.Path(arguments[-1])
     source.write_text(json.dumps(payload(audio_id)), encoding="utf-8")
+
     assert content_import.run(arguments + ["--dry-run"]) == 0
+
     assert json.loads(capsys.readouterr().out)["content_version"] is None
     with Session(test_engine) as db:
         assert db.scalar(select(func.count()).select_from(BookSection)) == 0
@@ -93,6 +97,7 @@ def test_direct_database_dry_run_publish_and_conflict(test_engine, monkeypatch, 
         assert book.content_version is None
 
     assert content_import.run(arguments) == 0
+
     result = json.loads(capsys.readouterr().out)
     assert result["content_version"] is not None
     with Session(test_engine) as db:
@@ -100,11 +105,15 @@ def test_direct_database_dry_run_publish_and_conflict(test_engine, monkeypatch, 
         assert db.scalar(select(BookSegment.text_content)) == "Text"
         assert db.get(StoredFile, audio_id).section_id is not None
         assert str(db.get(Book, book_id).content_version) == result["content_version"]
+
     for extra in ([], ["--dry-run"]):
         assert content_import.run(arguments + extra) == 1
         assert json.loads(capsys.readouterr().err)["error"]["code"] == "content_exists"
+
     arguments[1] = "9223372036854775807"
+
     assert content_import.run(arguments) == 1
+
     assert json.loads(capsys.readouterr().err)["error"]["code"] == "book_not_found"
 
 
@@ -112,15 +121,24 @@ def test_invalid_inputs_do_not_create_database_engine(monkeypatch, arguments, ca
     engine = Mock()
     monkeypatch.setitem(content_import.__dict__, "create_database_engine", engine)
     source = content_import.Path(arguments[-1])
+
     for text in ("not JSON", '{"schema_version":1,"schema_version":1}', '{"schema_version":1}'):
         source.write_text(text, encoding="utf-8")
+
         assert content_import.run(arguments) == 1
+
         assert json.loads(capsys.readouterr().err)["error"]["code"] == "content_validation_error"
+
     source.write_bytes(b"x" * (content_import.MAX_PAYLOAD_BYTES + 1))
+
     assert content_import.run(arguments) == 1
+
     assert json.loads(capsys.readouterr().err)["issues"][0]["code"] == "payload_limit"
+
     arguments[-1] += ".missing"
+
     assert content_import.run(arguments) == 1
+
     assert "Cannot read input" in capsys.readouterr().err
     engine.assert_not_called()
 
@@ -129,7 +147,9 @@ def test_missing_configuration_is_reported_without_secrets(monkeypatch, argument
     for name in list(content_import.Settings.model_fields):
         monkeypatch.delenv("VOICE_ARCHIVE_" + name.upper(), raising=False)
     monkeypatch.setenv("VOICE_ARCHIVE_POSTGRES_PASSWORD", "private-secret")
+
     assert content_import.run(arguments) == 1
+
     output = capsys.readouterr().err
     assert "Invalid configuration" in output
     assert "private-secret" not in output
@@ -139,7 +159,9 @@ def test_missing_configuration_is_reported_without_secrets(monkeypatch, argument
 def test_database_failure_is_redacted_and_never_retried(monkeypatch, arguments, capsys, dry_run):
     create_engine = Mock(side_effect=OperationalError("password=private-secret", {}, Exception("private-secret")))
     monkeypatch.setitem(content_import.__dict__, "create_database_engine", create_engine)
+
     assert content_import.run(arguments + (["--dry-run"] if dry_run else [])) == (1 if dry_run else 3)
+
     create_engine.assert_called_once()
     output = capsys.readouterr().err
     assert "private-secret" not in output
@@ -150,4 +172,5 @@ def test_database_failure_is_redacted_and_never_retried(monkeypatch, arguments, 
 def test_invalid_book_id(arguments, book_id):
     with pytest.raises(SystemExit) as exc:
         content_import.run(arguments + ["--book-id", book_id])
+
     assert exc.value.code == 2

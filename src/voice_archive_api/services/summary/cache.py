@@ -20,10 +20,10 @@ MIN_CACHE_TOKENS = 4096  # The configured Gemini 3.8 Flash minimum.
 
 
 @dataclass
-class SummaryCache:
+class SummaryContextCache:
     client: genai.client.AsyncClient
     settings: Settings
-    name: str
+    provider_cache_name: str
     expires_at: datetime
 
     async def get_available_name(self) -> str | None:
@@ -31,16 +31,16 @@ class SummaryCache:
         # an operator raises the normal 90-second provider deadline.
         margin = max(CACHE_RENEWAL_MARGIN_SECONDS, self.settings.gemini_answer_timeout_seconds + 30)
         if (self.expires_at - datetime.now(UTC)).total_seconds() > margin:
-            return self.name
+            return self.provider_cache_name
         ttl = max(CACHE_TTL_SECONDS, margin + 60)
         try:
             async with asyncio.timeout(self.settings.gemini_answer_timeout_seconds):
                 updated = await self.client.caches.update(
-                    name=self.name, config=types.UpdateCachedContentConfig(ttl=f"{ttl}s")
+                    name=self.provider_cache_name, config=types.UpdateCachedContentConfig(ttl=f"{ttl}s")
                 )
             if updated.expire_time is not None:
                 self.expires_at = updated.expire_time
-                return self.name
+                return self.provider_cache_name
         except errors.APIError, httpx.HTTPError, TimeoutError, ValueError:
             pass
         logger.warning("Summary cache renewal unavailable; using canonical context directly")
@@ -48,9 +48,9 @@ class SummaryCache:
 
 
 @asynccontextmanager
-async def create_summary_cache(
+async def create_summary_context_cache(
     settings: Settings, instruction: str, source: str, *, enabled: bool
-) -> AsyncIterator[SummaryCache | None]:
+) -> AsyncIterator[SummaryContextCache | None]:
     batch_key = settings.effective_gemini_batch_api_key
     if not enabled or not batch_key or not batch_key.get_secret_value():
         yield None
@@ -81,7 +81,7 @@ async def create_summary_cache(
                             ),
                         )
                         if created.name and created.expire_time:
-                            cache = SummaryCache(async_client, settings, created.name, created.expire_time)
+                            cache = SummaryContextCache(async_client, settings, created.name, created.expire_time)
             except errors.APIError, httpx.HTTPError, TimeoutError, ValueError:
                 logger.warning("Summary cache preparation unavailable; using canonical context directly")
             try:
@@ -90,6 +90,6 @@ async def create_summary_cache(
                 if cache is not None:
                     try:
                         async with asyncio.timeout(settings.gemini_answer_timeout_seconds):
-                            await async_client.caches.delete(name=cache.name)
+                            await async_client.caches.delete(name=cache.provider_cache_name)
                     except errors.APIError, httpx.HTTPError, TimeoutError, ValueError:
                         logger.warning("Summary cache cleanup unavailable; its TTL will expire")

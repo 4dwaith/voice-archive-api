@@ -322,8 +322,27 @@ book summaries directly through the CLI (no API server is required):
 
 ```powershell
 uv run --env-file .env summarize-book generate --book-id 34
+uv run --env-file .env summarize-book generate --book-id 34 --root-section-id 120
 uv run --env-file .env summarize-book clear --book-id 34
 ```
+
+`--root-section-id` selects one root section belonging to the book. It generates
+and atomically publishes that root's entire subtree, including nested section and
+passage summaries and required passage translations, changing the content version
+once. Other roots, sectionless passages and the book summary are left unchanged.
+Run consecutive roots in canonical order; each uses stored earlier-root summaries
+and the immediately previous root's full text. A whole-book run still generates
+all roots, sectionless passages and the book summary.
+
+Both generation modes require nonempty book summaries for all earlier books in
+the series. Root generation also requires nonempty root summaries for all earlier
+roots. Missing prerequisites fail before provider work or creation of a run.
+Generation fails if later roots (for root mode) or later books in the series
+(both modes) contain any book, section or passage summaries, including partially
+summarized scopes. The error identifies the blockers. Explicitly accept the risk
+of stale downstream output with `--allow-stale-downstream`; this leaves later
+summaries unchanged and reports affected scopes. It does not bypass prerequisites
+or other validation. Both new flags apply only to `generate`.
 
 Summary generation and its cache calls use the server-only
 `VOICE_ARCHIVE_GEMINI_BATCH_API_KEY`, falling back to `VOICE_ARCHIVE_GEMINI_API_KEY`
@@ -386,12 +405,14 @@ Cache preparation/renewal failures use full canonical context directly; generati
 retries also stop using the cache. Failed cleanup leaves the TTL as a fallback.
 This uses ordinary generation requests, not the asynchronous Batch API.
 
-Results stay in memory until the complete set, including every required passage
+Results stay in memory until the complete selected scope, including every required passage
 translation, passes validation. Publication stores summaries and translations
 atomically and changes the book content version once; a clear removes both and
 changes the version when either was present. Policy `reader-context-english-v6`
 makes earlier runs eligible for regeneration under the resolved-language policy. The nullable field
-requires migration `0017_passage_translations`. `book_summary_runs` records source fingerprints, running/completed/
+requires migration `0017_passage_translations`; scoped runs require
+`0018_summary_scopes`. `book_summary_runs` records the selected root (null for a
+whole book), the downstream override, source fingerprints, running/completed/
 failed state, timestamps and model/policy/source-language provenance. Before any
 provider work, generation exits successfully if a job is already running or the
 accepted summaries match the current source, background, model and policy. Clearing
@@ -400,13 +421,17 @@ summaries permits regeneration even when source text is unchanged.
 A new invocation marks running jobs at least four hours old failed and can start
 a replacement. Recovery runs only on invocation, using short SQLAlchemy transactions
 and the existing book write lock; no advisory lock, heartbeat or scheduler is used.
-The fingerprint covers canonical text/structure/IDs, relevant book metadata, series
+The fingerprint covers selected canonical text/structure/IDs, relevant book metadata, series
 membership and earlier-book summary inputs, excluding content versions and generated
-current-book summaries. It is checked again at publication. Clear/purge invalidate
+current-book summaries outside a root's earlier-root background. Root fingerprints
+also include earlier-root summaries and the previous root's canonical text. Inputs
+and downstream blockers are rechecked at publication under the existing book/series
+write locks. A completed root cannot skip book generation or another root; subsequent
+overlapping publications supersede its eligibility for skipping. Clear/purge invalidate
 running jobs; replaced workers stop before later provider work and cannot publish.
 Failures preserve accepted data. Purge removes summaries with canonical content.
-Generate books in series order to make earlier-book summaries available as context;
-missing summaries are explicit, and changed background dependencies reject late work.
+Generate books in series order to provide required earlier-book summaries;
+changed background dependencies reject late work, even with the downstream override.
 Summary reads use the existing catalog/content endpoints and client version
 refresh, including normal stale-position/reference and pagination rebuild rules.
 Whole-series summaries are deferred.

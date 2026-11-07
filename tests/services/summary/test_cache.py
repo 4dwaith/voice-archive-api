@@ -8,7 +8,7 @@ from google.genai import Client
 from pydantic import SecretStr
 
 from voice_archive_api.core.config import Settings
-from voice_archive_api.services.summary.cache import create_summary_cache
+from voice_archive_api.services.summary.cache import create_summary_context_cache
 
 
 @pytest.mark.parametrize(
@@ -49,7 +49,9 @@ def test_cache_lifetime_and_optional_failure_fallback(monkeypatch, outcome):
     monkeypatch.setattr("voice_archive_api.services.summary.cache.genai.Client", create_test_client)
 
     async def use_cache():
-        async with create_summary_cache(settings, "Summarize faithfully", "Canonical context", enabled=True) as cache:
+        async with create_summary_context_cache(
+            settings, "Summarize faithfully", "Canonical context", enabled=True
+        ) as cache:
             if outcome in {"too_small", "create_failure"}:
                 assert cache is None
                 return
@@ -87,7 +89,7 @@ def test_cache_falls_back_to_interactive_api_key_when_batch_key_unset(monkeypatc
     monkeypatch.setattr("voice_archive_api.services.summary.cache.genai.Client", create_test_client)
 
     async def use_cache():
-        async with create_summary_cache(settings, "Instruction", "Source", enabled=True) as cache:
+        async with create_summary_context_cache(settings, "Instruction", "Source", enabled=True) as cache:
             assert cache is None
 
     asyncio.run(use_cache())
@@ -102,7 +104,7 @@ def test_cache_without_any_key_skips_client_creation(monkeypatch):
     monkeypatch.setattr("voice_archive_api.services.summary.cache.genai.Client", reject_client_creation)
 
     async def use_cache():
-        async with create_summary_cache(settings, "Instruction", "Source", enabled=True) as cache:
+        async with create_summary_context_cache(settings, "Instruction", "Source", enabled=True) as cache:
             assert cache is None
 
     asyncio.run(use_cache())
@@ -117,7 +119,7 @@ def test_single_request_scope_skips_all_cache_calls(monkeypatch):
     monkeypatch.setattr("voice_archive_api.services.summary.cache.genai.Client", reject_client_creation)
 
     async def use_cache():
-        async with create_summary_cache(settings, "Instruction", "Source", enabled=False) as cache:
+        async with create_summary_context_cache(settings, "Instruction", "Source", enabled=False) as cache:
             assert cache is None
 
     asyncio.run(use_cache())

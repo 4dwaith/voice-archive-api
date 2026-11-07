@@ -13,8 +13,8 @@ from sqlalchemy import select
 from tests.summary_helpers import create_summary_drafts
 from voice_archive_api.db.models.book import Book
 from voice_archive_api.db.models.content import BookSegment
-from voice_archive_api.db.models.summary import SummaryRun
-from voice_archive_api.logic.summaries import POLICY, SUMMARY_INSTRUCTIONS, SummaryDraft
+from voice_archive_api.db.models.summary import SummaryGenerationRun
+from voice_archive_api.logic.summaries import POLICY, SUMMARY_INSTRUCTIONS, GeneratedSummary
 from voice_archive_api.services.books.schemas import BookPatch
 from voice_archive_api.services.books.service import patch_book
 from voice_archive_api.services.library.provider import BookTooLargeError
@@ -71,7 +71,7 @@ def test_batched_roots_keep_full_context_and_carry_earlier_summaries(
         requests.append(parts)
         result = {
             "summaries": [
-                SummaryDraft(
+                GeneratedSummary(
                     kind=target["kind"], id=target["id"], language="en", summary="A traveller describes a journey."
                 ).model_dump()
                 for target in json.loads(parts[1])["TARGETS"]
@@ -140,7 +140,7 @@ def test_generation_failure_retains_accepted_set_and_version(client, summary_boo
         if problem == "invalid" and len(calls) == 1:
             return output_type(
                 summaries=[
-                    SummaryDraft(
+                    GeneratedSummary(
                         kind=target["kind"],
                         id=target["id"],
                         language="en",
@@ -152,7 +152,7 @@ def test_generation_failure_retains_accepted_set_and_version(client, summary_boo
             )
         raise {"invalid": ValueError, "oversize": BookTooLargeError, "timeout": TimeoutError}[problem]()
 
-    monkeypatch.setattr(summaries, "generate_structured_output", fail_generation)
+    monkeypatch.setitem(summaries.__dict__, "generate_structured_output", fail_generation)
 
     with pytest.raises(ValueError, match="exceeds" if problem == "oversize" else "generation failed"):
         asyncio.run(summaries.generate_book_summaries(factory, client.app.state.settings, book_id))
@@ -163,14 +163,14 @@ def test_generation_failure_retains_accepted_set_and_version(client, summary_boo
         assert book.content_version == version
         assert book.summary == "The book describes a return home."
         assert db.scalar(select(BookSegment.english_translation)) == "He came home to see his mother."
-        accepted = db.get(SummaryRun, snapshot.run_id)
+        accepted = db.get(SummaryGenerationRun, snapshot.run_id)
         assert (accepted.model, accepted.policy, accepted.source_language, accepted.state) == (
             "test-model",
             POLICY,
             "kn",
             "completed",
         )
-        failed = db.scalar(select(SummaryRun).where(SummaryRun.state == "failed"))
+        failed = db.scalar(select(SummaryGenerationRun).where(SummaryGenerationRun.state == "failed"))
         assert failed.finished_at is not None
         assert failed.failure_reason == "Summary generation or publication failed"
 
@@ -185,14 +185,14 @@ def test_running_job_skips_provider_work_even_if_source_changes(client, summary_
     def reject_provider_work(*args, **kwargs):
         pytest.fail("An active job must be checked before any provider work")
 
-    monkeypatch.setattr(summaries, "create_summary_cache", reject_provider_work)
-    monkeypatch.setattr(summaries, "generate_structured_output", reject_provider_work)
+    monkeypatch.setitem(summaries.__dict__, "create_summary_context_cache", reject_provider_work)
+    monkeypatch.setitem(summaries.__dict__, "generate_structured_output", reject_provider_work)
 
     result = asyncio.run(summaries.generate_book_summaries(factory, client.app.state.settings, book_id))
 
     assert result == version
     with factory() as db:
-        assert db.get(SummaryRun, original.run_id).state == "running"
+        assert db.get(SummaryGenerationRun, original.run_id).state == "running"
 
 
 def test_cleared_run_stops_before_another_provider_request(client, summary_book, monkeypatch):
@@ -205,7 +205,7 @@ def test_cleared_run_stops_before_another_provider_request(client, summary_book,
         summaries.clear_book_summaries(factory, book_id)
         return output_type(
             summaries=[
-                SummaryDraft(
+                GeneratedSummary(
                     kind=target["kind"],
                     id=target["id"],
                     language="en",
@@ -216,7 +216,7 @@ def test_cleared_run_stops_before_another_provider_request(client, summary_book,
             ]
         )
 
-    monkeypatch.setattr(summaries, "generate_structured_output", generate_output)
+    monkeypatch.setitem(summaries.__dict__, "generate_structured_output", generate_output)
 
     with pytest.raises(ValueError, match="run changed"):
         asyncio.run(summaries.generate_book_summaries(factory, client.app.state.settings, book_id))
@@ -225,7 +225,7 @@ def test_cleared_run_stops_before_another_provider_request(client, summary_book,
     with factory() as db:
         assert db.get(Book, book_id).content_version == version
         assert db.get(Book, book_id).summary is None
-        assert db.scalar(select(SummaryRun)).state == "failed"
+        assert db.scalar(select(SummaryGenerationRun)).state == "failed"
 
 
 def test_summary_generation_succeeds_with_only_batch_key(client, summary_book, monkeypatch):
@@ -238,7 +238,7 @@ def test_summary_generation_succeeds_with_only_batch_key(client, summary_book, m
         assert options.get("api_key") == SecretStr("only-batch-secret")
         return output_type(
             summaries=[
-                SummaryDraft(
+                GeneratedSummary(
                     kind=target["kind"],
                     id=target["id"],
                     language="en",
@@ -249,7 +249,7 @@ def test_summary_generation_succeeds_with_only_batch_key(client, summary_book, m
             ]
         )
 
-    monkeypatch.setattr(summaries, "generate_structured_output", generate_output)
+    monkeypatch.setitem(summaries.__dict__, "generate_structured_output", generate_output)
 
     new_version = asyncio.run(summaries.generate_book_summaries(factory, client.app.state.settings, book_id))
     assert new_version != version
