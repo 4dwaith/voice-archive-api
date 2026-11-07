@@ -12,6 +12,7 @@ from sqlalchemy import select, text
 
 from voice_archive_api.cli import summaries as cli
 from voice_archive_api.db.models.book import Book
+from voice_archive_api.db.models.content import BookSegment
 from voice_archive_api.db.models.summary import SummaryRun
 from voice_archive_api.logic.summaries import SUMMARY_INSTRUCTIONS, SummaryDraft
 
@@ -29,6 +30,7 @@ def create_summary_case(summary_book):
         "counted_configs": [],
         "generated_configs": [],
         "reject": False,
+        "omit_translation": False,
     }
 
 
@@ -94,7 +96,15 @@ def mock_summary_provider(client, summary_case, monkeypatch):
         result = {
             "summaries": [
                 SummaryDraft(
-                    kind=target["kind"], id=target["id"], language="en", summary="He returned home to see his mother."
+                    kind=target["kind"],
+                    id=target["id"],
+                    language="en",
+                    summary="He returned home to see his mother.",
+                    english_translation=(
+                        "He came home to see his mother."
+                        if target["kind"] == "segment" and not summary_case["omit_translation"]
+                        else None
+                    ),
                 ).model_dump()
                 for target in json.loads(parts[1])["TARGETS"]
             ]
@@ -128,6 +138,8 @@ def verify_published_summaries(client, summary_case):
     for collection in state[2:]:
         assert collection["content_version"] == str(version)
         assert [row["summary"] for row in collection["items"]] == ["He returned home to see his mother."]
+    with client.app.state.session_factory() as db:
+        assert db.scalar(select(BookSegment.english_translation)) == "He came home to see his mother."
 
 
 @then("the previous content version is rejected by paginated reads")
@@ -192,6 +204,8 @@ def verify_cleared_summaries(client, summary_case):
         assert collection["content_version"] == str(version)
         assert all(row["summary"] is None for row in collection["items"])
     assert len(summary_case["requests"]) == summary_case["request_count"]
+    with client.app.state.session_factory() as db:
+        assert db.scalar(select(BookSegment.english_translation)) is None
 
 
 @given("the book title changes before a rejected replacement")
@@ -203,6 +217,13 @@ def reject_replacement_generation(client, summary_case):
     summary_case["reject"] = True
 
 
+@given("the book title changes before a replacement without its passage translation")
+def omit_replacement_translation(client, summary_case):
+    reject_replacement_generation(client, summary_case)
+    summary_case["reject"] = False
+    summary_case["omit_translation"] = True
+
+
 @then("the command reports failure and preserves the accepted summary reads")
 def verify_failed_replacement(client, summary_case):
     assert summary_case["exit_code"] == 1
@@ -211,3 +232,5 @@ def verify_failed_replacement(client, summary_case):
     assert "provider-secret" not in summary_case["output"].err
     assert len(summary_case["requests"]) > summary_case["request_count"]
     assert read_summary_state(client, summary_case["book_id"]) == summary_case["before"]
+    with client.app.state.session_factory() as db:
+        assert db.scalar(select(BookSegment.english_translation)) == "He came home to see his mother."

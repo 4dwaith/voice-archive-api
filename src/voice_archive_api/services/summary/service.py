@@ -12,6 +12,7 @@ from google.genai import errors
 from sqlalchemy import select, update
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session, sessionmaker
+from sqlalchemy.sql.elements import ColumnElement
 from starlette.concurrency import run_in_threadpool
 
 from voice_archive_api.core.config import Settings
@@ -34,6 +35,7 @@ from voice_archive_api.logic.summaries import (
     order_source_fragments,
     split_summary_targets,
     validate_summary_coverage,
+    validate_summary_translations,
 )
 from voice_archive_api.services.books.service import BookNotFound, get_book, lock_book_for_series_write
 from voice_archive_api.services.library.provider import BookTooLargeError, generate_structured_output
@@ -171,6 +173,7 @@ def publish_book_summaries(
     factory: sessionmaker[Session], snapshot: SummarySnapshot, drafts: list[SummaryDraft]
 ) -> UUID:
     validate_summary_coverage(build_summary_targets(snapshot.book_id, snapshot.fragments), drafts)
+    validate_summary_translations(drafts, snapshot.metadata["language"])
     with factory.begin() as db:
         book = lock_summary_book(db, snapshot.book_id)
         run = db.get(SummaryRun, snapshot.run_id, with_for_update=True)
@@ -184,7 +187,15 @@ def publish_book_summaries(
         ):
             raise ValueError("Book source, background or summary run changed; regenerate summaries")
         for kind, table in (("section", BookSection), ("segment", BookSegment)):
-            rows = [{"id": draft.id, "summary": draft.summary} for draft in drafts if draft.kind == kind]
+            rows = [
+                {
+                    "id": draft.id,
+                    "summary": draft.summary,
+                    **({"english_translation": draft.english_translation} if kind == "segment" else {}),
+                }
+                for draft in drafts
+                if draft.kind == kind
+            ]
             if rows:
                 db.execute(update(table), rows)
         book.summary = next(draft.summary for draft in drafts if draft.kind == "book")
@@ -199,11 +210,13 @@ def clear_book_summaries(factory: sessionmaker[Session], book_id: int) -> UUID |
         book = get_book(db, book_id, for_update=True)
         changed = book.summary is not None
         for table in (BookSection, BookSegment):
+            has_output: ColumnElement[bool] = table.summary.is_not(None)
+            values: dict[str, None] = {"summary": None}
+            if table is BookSegment:
+                has_output = has_output | BookSegment.english_translation.is_not(None)
+                values["english_translation"] = None
             cleared = db.scalar(
-                update(table)
-                .where(table.book_id == book_id, table.summary.is_not(None))
-                .values(summary=None)
-                .returning(table.id)
+                update(table).where(table.book_id == book_id, has_output).values(**values).returning(table.id)
             )
             changed = cleared is not None or changed
         db.execute(
@@ -268,7 +281,7 @@ async def generate_and_publish_summaries(
             scope.targets,
             key=lambda target: (end_indexes[(target.kind, target.id)], target.kind != "segment"),
         )
-        batches = split_summary_targets(ordered_targets, scope.fragments)
+        batches = split_summary_targets(ordered_targets, scope.fragments, source_language=snapshot.metadata["language"])
         async with create_summary_cache(settings, SUMMARY_INSTRUCTIONS, source, enabled=len(batches) > 1) as cache:
             for batch_index, targets in enumerate(batches, start=1):
                 target_text = json.dumps(
@@ -297,6 +310,7 @@ async def generate_and_publish_summaries(
                             cached_content=cached_name,
                         )
                         validate_summary_coverage(targets, result.summaries)
+                        validate_summary_translations(result.summaries, snapshot.metadata["language"])
                         drafts.extend(result.summaries)
                         break
                     except BookTooLargeError as exc:

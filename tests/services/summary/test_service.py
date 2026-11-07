@@ -12,6 +12,7 @@ from sqlalchemy import select
 
 from tests.summary_helpers import create_summary_drafts
 from voice_archive_api.db.models.book import Book
+from voice_archive_api.db.models.content import BookSegment
 from voice_archive_api.db.models.summary import SummaryRun
 from voice_archive_api.logic.summaries import POLICY, SUMMARY_INSTRUCTIONS, SummaryDraft
 from voice_archive_api.services.books.schemas import BookPatch
@@ -119,6 +120,11 @@ def test_batched_roots_keep_full_context_and_carry_earlier_summaries(
     assert first["BACKGROUND"]["previous_books"] == [
         {"title": "Journey", "summary": "The book describes a return home."}
     ]
+    with client.app.state.session_factory() as db:
+        assert all(
+            row.english_translation is None
+            for row in db.scalars(select(BookSegment).where(BookSegment.book_id == current_id))
+        )
 
 
 @pytest.mark.parametrize("problem", ["invalid", "oversize", "timeout"])
@@ -135,7 +141,11 @@ def test_generation_failure_retains_accepted_set_and_version(client, summary_boo
             return output_type(
                 summaries=[
                     SummaryDraft(
-                        kind=target["kind"], id=target["id"], language="en", summary="A staged replacement summary."
+                        kind=target["kind"],
+                        id=target["id"],
+                        language="en",
+                        summary="A staged replacement summary.",
+                        english_translation="A replacement translation." if target["kind"] == "segment" else None,
                     )
                     for target in json.loads(parts[1])["TARGETS"]
                 ]
@@ -152,6 +162,7 @@ def test_generation_failure_retains_accepted_set_and_version(client, summary_boo
         book = db.get(Book, book_id)
         assert book.content_version == version
         assert book.summary == "The book describes a return home."
+        assert db.scalar(select(BookSegment.english_translation)) == "He came home to see his mother."
         accepted = db.get(SummaryRun, snapshot.run_id)
         assert (accepted.model, accepted.policy, accepted.source_language, accepted.state) == (
             "test-model",
@@ -194,7 +205,13 @@ def test_cleared_run_stops_before_another_provider_request(client, summary_book,
         summaries.clear_book_summaries(factory, book_id)
         return output_type(
             summaries=[
-                SummaryDraft(kind=target["kind"], id=target["id"], language="en", summary="A traveller returns home.")
+                SummaryDraft(
+                    kind=target["kind"],
+                    id=target["id"],
+                    language="en",
+                    summary="A traveller returns home.",
+                    english_translation="He came home to see his mother." if target["kind"] == "segment" else None,
+                )
                 for target in json.loads(parts[1])["TARGETS"]
             ]
         )
@@ -221,7 +238,13 @@ def test_summary_generation_succeeds_with_only_batch_key(client, summary_book, m
         assert options.get("api_key") == SecretStr("only-batch-secret")
         return output_type(
             summaries=[
-                SummaryDraft(kind=target["kind"], id=target["id"], language="en", summary="A traveller returns home.")
+                SummaryDraft(
+                    kind=target["kind"],
+                    id=target["id"],
+                    language="en",
+                    summary="A traveller returns home.",
+                    english_translation="He came home to see his mother." if target["kind"] == "segment" else None,
+                )
                 for target in json.loads(parts[1])["TARGETS"]
             ]
         )

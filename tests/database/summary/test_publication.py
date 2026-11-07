@@ -81,6 +81,7 @@ def test_clear_changes_the_version_once_and_removes_every_summary(client, summar
         assert all(
             row.summary is None for table in (Book, BookSection, BookSegment) for row in db.scalars(select(table))
         )
+        assert db.scalar(select(BookSegment.english_translation)) is None
 
     assert isinstance(summaries.start_summary_run(factory, book_id, "test-model"), summaries.SummarySnapshot)
 
@@ -107,7 +108,12 @@ def test_database_failure_rolls_back_partly_written_replacement(client, summary_
     version = summaries.publish_book_summaries(factory, snapshot, create_summary_drafts(snapshot))
     replacement = summaries.start_summary_run(factory, book_id, "replacement-model")
     drafts = [
-        draft.model_copy(update={"summary": "A replacement description."})
+        draft.model_copy(
+            update={
+                "summary": "A replacement description.",
+                "english_translation": "A replacement translation." if draft.kind == "segment" else None,
+            }
+        )
         for draft in create_summary_drafts(replacement)
     ]
 
@@ -129,6 +135,20 @@ def test_database_failure_rolls_back_partly_written_replacement(client, summary_
         assert db.get(SummaryRun, replacement.run_id).state == "running"
         assert [row.summary for row in db.scalars(select(BookSection))] == ["The section describes a return home."]
         assert [row.summary for row in db.scalars(select(BookSegment))] == ["The segment describes a return home."]
+        assert db.scalar(select(BookSegment.english_translation)) == "He came home to see his mother."
+
+
+def test_clear_removes_a_translation_even_without_summaries(client, summary_book):
+    book_id, version = summary_book
+    factory = client.app.state.session_factory
+    with factory.begin() as db:
+        db.scalar(select(BookSegment)).english_translation = "He came home to see his mother."
+
+    cleared = summaries.clear_book_summaries(factory, book_id)
+
+    assert cleared != version
+    with factory() as db:
+        assert db.scalar(select(BookSegment.english_translation)) is None
 
 
 def test_rejects_generation_without_canonical_text(client):

@@ -338,6 +338,16 @@ reading order; provider-visible background has no IDs, version identifiers or ta
 The book summary uses full canonical book text. Background clarifies references;
 target summaries are not derived from child summaries. Progress goes to stderr,
 and stdout reports the resulting book ID/content version as JSON.
+For a book whose primary language subtag is not `en`, each passage target also
+produces a full faithful English translation in `segments.english_translation`.
+English-source passages and all book/section targets return no translation.
+Translations preserve detail, order, names, attribution and uncertainty; contextual
+clarification belongs in the separate summary. This internal field is stored for
+later retrieval preparation; current public content/Live response shapes are unchanged.
+Translation text adds an uncapped allowance of 64 tokens plus half the canonical
+passage character count to the working output estimate. This remains a heuristic;
+it does not prove actual output size or translation fidelity. A very long passage
+still forms one target and can exceed provider output capacity.
 Source uses one reading-ordered `fragments` array of `{id, parent_id, kind, text}`;
 kind is `section` (heading) or `passage`, and parent IDs always name sections.
 Fragment identities include kind because section/passage IDs can overlap. Passage
@@ -365,9 +375,12 @@ Cache preparation/renewal failures use full canonical context directly; generati
 retries also stop using the cache. Failed cleanup leaves the TTL as a fallback.
 This uses ordinary generation requests, not the asynchronous Batch API.
 
-Results stay in memory until the complete set passes validation. Publication
-changes the book content version once; a clear changes it only when summaries
-were present. `book_summary_runs` records source fingerprints, running/completed/
+Results stay in memory until the complete set, including every required passage
+translation, passes validation. Publication stores summaries and translations
+atomically and changes the book content version once; a clear removes both and
+changes the version when either was present. Policy `reader-context-english-v5`
+makes earlier summary-only runs eligible for regeneration. The new nullable field
+requires migration `0017_passage_translations`. `book_summary_runs` records source fingerprints, running/completed/
 failed state, timestamps and model/policy/source-language provenance. Before any
 provider work, generation exits successfully if a job is already running or the
 accepted summaries match the current source, background, model and policy. Clearing

@@ -77,8 +77,10 @@ def test_cache_falls_back_to_interactive_api_key_when_batch_key_unset(monkeypatc
 
     def create_test_client(*, api_key, http_options):
         assert api_key == "interactive-fallback-secret"
+
         async def respond(request):
             return httpx.Response(200, json={"totalTokens": 100})
+
         http_options.async_client_args = {"transport": httpx.MockTransport(respond)}
         return Client(api_key=api_key, http_options=http_options)
 

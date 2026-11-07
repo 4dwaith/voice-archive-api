@@ -17,6 +17,7 @@ from voice_archive_api.logic.summaries import (
     order_source_fragments,
     split_summary_targets,
     validate_summary_coverage,
+    validate_summary_translations,
 )
 
 
@@ -104,6 +105,65 @@ def test_batches_targets_for_a_conservative_response_size(text, first_size, maxi
     assert len(batches[0]) == first_size
     assert all(len(batch) <= maximum_size for batch in batches)
     assert [target for batch in batches for target in batch] == targets
+
+
+def test_translation_output_allowance_grows_with_the_full_passage():
+    targets = [SummaryTarget(kind="segment", id=index) for index in range(3)]
+    passages = [SourceFragment(id=index, parent_id=None, kind="passage", text="ಕ" * 8000) for index in range(3)]
+
+    translated_batches = split_summary_targets(targets, passages, source_language="kn-IN")
+    english_batches = split_summary_targets(targets, passages, source_language="en-US")
+
+    assert translated_batches == [[target] for target in targets]
+    assert english_batches == [targets]
+
+
+@pytest.mark.parametrize(
+    "language,kind,translation",
+    [
+        ("kn", "segment", "A complete translation."),
+        ("fr", "segment", "A complete translation."),
+        ("en-US", "segment", None),
+        ("kn", "section", None),
+        ("kn", "book", None),
+    ],
+)
+def test_accepts_translation_only_for_non_english_passages(language, kind, translation):
+    draft = SummaryDraft(kind=kind, id=1, language="en", summary="A concise summary.", english_translation=translation)
+
+    validate_summary_translations([draft], language)
+
+
+@pytest.mark.parametrize(
+    "language,kind,translation",
+    [
+        ("kn-IN", "segment", None),
+        ("en", "segment", "Unnecessary translation."),
+        ("kn", "section", "Unnecessary translation."),
+        ("kn", "book", "Unnecessary translation."),
+    ],
+)
+def test_rejects_missing_or_unrequested_translations(language, kind, translation):
+    draft = SummaryDraft(kind=kind, id=1, language="en", summary="A concise summary.", english_translation=translation)
+
+    with pytest.raises(ValueError, match="translations"):
+        validate_summary_translations([draft], language)
+
+
+@pytest.mark.parametrize("translation", ["  ", "Text\x00"])
+def test_rejects_unusable_translation_text(translation):
+    with pytest.raises(ValueError, match="translation"):
+        SummaryDraft(kind="segment", id=1, language="en", summary="A concise summary.", english_translation=translation)
+
+
+@pytest.mark.parametrize("translation", ["A complete translated passage. " * 400, "123 —"])
+def test_translation_preserves_full_passage_text(translation):
+    draft = SummaryDraft(
+        kind="segment", id=1, language="en", summary="A concise summary.", english_translation=translation
+    )
+
+    assert draft.english_translation == translation.strip()
+    validate_summary_translations([draft], "kn")
 
 
 def test_target_cutoffs_follow_subtrees_and_passage_positions_with_overlapping_ids():

@@ -28,3 +28,9 @@ Feature: Prepare English summaries for a published book
     And the book title changes before a rejected replacement
     When I generate summaries with the local command
     Then the command reports failure and preserves the accepted summary reads
+
+  Scenario: A missing passage translation prevents replacement
+    Given summaries have already been generated
+    And the book title changes before a replacement without its passage translation
+    When I generate summaries with the local command
+    Then the command reports failure and preserves the accepted summary reads

@@ -107,6 +107,7 @@ class BookSegment(Base):
     html_content: Mapped[str] = mapped_column(Text)
     text_content: Mapped[str] = mapped_column(Text)
     summary: Mapped[str | None] = mapped_column(Text)
+    english_translation: Mapped[str | None] = mapped_column(Text)
     language: Mapped[str | None] = mapped_column(Text)
     regions: Mapped[list[dict[str, Any]]] = mapped_column(JSONB, server_default=sql_text("'[]'::jsonb"))
     page_indexes: Mapped[list[int]] = mapped_column(
