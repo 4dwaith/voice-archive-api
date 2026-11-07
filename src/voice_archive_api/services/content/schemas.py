@@ -20,6 +20,7 @@ class ContentFile(BaseModel):
 
 
 class ContentManifest(BaseModel):
+    summary: str | None
     state: Literal["empty", "pdf_only", "published"]
     content_version: UUID | None
     schema_version: int | None
@@ -31,6 +32,7 @@ class ContentManifest(BaseModel):
 
 
 class SectionRead(BaseModel):
+    summary: str | None
     id: int
     source_key: str
     parent_id: int | None
@@ -43,6 +45,7 @@ class SectionRead(BaseModel):
 
 
 class SegmentRead(BaseModel):
+    summary: str | None
     model_config = ConfigDict(from_attributes=True)
 
     id: int

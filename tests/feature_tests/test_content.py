@@ -9,7 +9,6 @@ import pytest
 from httpx import Response
 from pytest_bdd import given, parsers, scenarios, then, when
 
-from tests.feature_tests.test_books import fetch_library
 from tests.file_processing.file_samples import cover_bytes, mp3_bytes, pdf_bytes
 
 scenarios("../features/content")
@@ -332,6 +331,7 @@ def import_succeeds(client, content):
     assert UUID(data["content_version"]).version == 4
     current = fetch_manifest(client, content)
     assert current.json() == {
+        "summary": None,
         "state": "published",
         "content_version": data["content_version"],
         "schema_version": 1,
@@ -495,6 +495,7 @@ def purge_succeeds(content):
 @then("the book content is empty and its owned media are unavailable")
 def purged(client, test_engine, content):
     assert fetch_manifest(client, content).json() == {
+        "summary": None,
         "state": "empty",
         "content_version": None,
         "schema_version": None,

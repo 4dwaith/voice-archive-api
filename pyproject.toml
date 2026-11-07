@@ -79,4 +79,5 @@ ignore_missing_imports = true
 
 [project.scripts]
 import-book-content = "voice_archive_api.cli.content_import:main"
+summarize-book = "voice_archive_api.cli.summaries:main"
 

@@ -73,6 +73,7 @@ class BookResponse(BaseModel):
     language: Language
     author: Author | None
     description: Description | None
+    summary: str | None
     cover_file_id: FileId | None
     source_pdf_file_id: FileId | None
     series_id: FileId | None

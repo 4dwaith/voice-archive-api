@@ -3,6 +3,14 @@ import pytest
 from .helpers import assert_operation_contract, assert_request_body_contract
 
 
+@pytest.mark.parametrize("model", ["BookResponse", "ContentManifest", "SectionRead", "SegmentRead"])
+def test_summary_reads_are_explicitly_nullable(openapi_document, model):
+    schema = openapi_document["components"]["schemas"][model]
+
+    assert "summary" in schema["required"]
+    assert schema["properties"]["summary"]["anyOf"] == [{"type": "string"}, {"type": "null"}]
+
+
 @pytest.mark.parametrize(
     "path,method,operation_id,responses",
     [

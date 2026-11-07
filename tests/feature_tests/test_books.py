@@ -21,6 +21,7 @@ class Book(TypedDict):
     language: str
     author: str | None
     description: str | None
+    summary: str | None
     cover_file_id: int | None
     source_pdf_file_id: int | None
     series_index: int | None
@@ -308,11 +309,13 @@ def generated_values(state):
     for key in ("created_at", "updated_at"):
         assert datetime.fromisoformat(book[key]).utcoffset().total_seconds() == 0
     assert book["created_at"] == book["updated_at"]
+    assert book["summary"] is None
     assert set(book) == {
         "id",
         "title",
         "author",
         "description",
+        "summary",
         "language",
         "created_at",
         "updated_at",

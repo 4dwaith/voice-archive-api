@@ -7,12 +7,13 @@ from itertools import batched
 from typing import Any
 from uuid import uuid4
 
-from sqlalchemy import func, insert, select, text
+from sqlalchemy import func, insert, select, text, update
 from sqlalchemy.orm import Session
 
 from voice_archive_api.core.errors import ApplicationError
 from voice_archive_api.db.models.content import BookSection, BookSegment
 from voice_archive_api.db.models.file import StoredFile
+from voice_archive_api.db.models.summary import SummaryRun
 from voice_archive_api.logic.content_validation.assets import referenced_file_ids, validate_assets
 from voice_archive_api.logic.content_validation.schemas import ContentInput, SectionInput
 from voice_archive_api.logic.content_validation.validation import (
@@ -160,6 +161,7 @@ def get_manifest_and_etag(db: Session, book_id: int) -> tuple[ContentManifest, s
     etag = f'"book-content-v1-{book.id}-{state}"'
 
     manifest = ContentManifest(
+        summary=book.summary,
         state="published" if book.content_version else "pdf_only" if book.source_pdf_file_id else "empty",
         content_version=book.content_version,
         schema_version=book.content_schema_version,
@@ -213,4 +215,14 @@ def purge(db: Session, book_id: int, if_match: str | None) -> None:
         book.content_version = None
         book.content_schema_version = None
         book.content_imported_at = None
+        book.summary = None
+        db.execute(
+            update(SummaryRun)
+            .where(SummaryRun.book_id == book_id, SummaryRun.state == "running")
+            .values(
+                state="failed",
+                finished_at=datetime.now(UTC),
+                failure_reason="Canonical content purged",
+            )
+        )
         db.commit()

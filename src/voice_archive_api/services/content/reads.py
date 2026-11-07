@@ -74,6 +74,7 @@ def sections(db: Session, book: Book, limit: int, offset: int) -> SectionPage:
     )
     items = [
         SectionRead(
+            summary=r.summary,
             id=r.id,
             source_key=r.source_key,
             parent_id=r.parent_id,

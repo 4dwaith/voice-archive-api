@@ -65,6 +65,7 @@ class Book(Base):
     author: Mapped[str | None] = mapped_column(String(AUTHOR_LIMIT))
     normalized_author: Mapped[str] = mapped_column(Text)
     description: Mapped[str | None] = mapped_column(String(DESCRIPTION_LIMIT))
+    summary: Mapped[str | None] = mapped_column(Text)
     language: Mapped[str] = mapped_column(Text, CheckConstraint("length(language) > 0", name="language_nonempty"))
     cover_file_id: Mapped[int | None] = column_property(
         select(StoredFile.id)

@@ -24,7 +24,7 @@ after code or dependency changes; Compose does not enable hot reload.
 | API                                           | Purpose                                                              |
 | --------------------------------------------- | -------------------------------------------------------------------- |
 | `/api/v1/books` and `/{id}`                   | Create, list, retrieve, update, and delete books                     |
-| `/api/v1/series` and `/{id}` | Create, list, read, rename and delete series |
+| `/api/v1/series` and `/{id}`                  | Create, list, read, rename and delete series                         |
 | `/api/v1/files/{kind}`                        | Upload and prepare a `cover`, `source_pdf`, or `audio_chapter` MP3   |
 | `/api/v1/books/{id}/content-imports`          | Atomic canonical import, with optional dry-run                       |
 | `/api/v1/books/{id}/content`                  | Content manifest/ETag and conditional PDF/audio/text purge           |
@@ -314,6 +314,75 @@ uv run --env-file .env alembic revision --autogenerate -m "describe the schema c
 
 The migration role needs permission to install PostgreSQL's bundled `pgcrypto`
 extension, as provided by local Compose.
+
+## English summaries
+
+After applying the normal migrations, generate or clear all segment, section and
+book summaries directly through the CLI (no API server is required):
+
+```powershell
+uv run --env-file .env summarize-book generate --book-id 34
+uv run --env-file .env summarize-book clear --book-id 34
+```
+
+Generation reuses `VOICE_ARCHIVE_GEMINI_API_KEY`, `VOICE_ARCHIVE_GEMINI_TEXT_MODEL`
+and the existing Gemini input-token/timeout settings. Each root supplies complete
+canonical context; requests batch targets for an estimated 6,000-token response,
+with background from earlier book/root summaries and the previous root's full text.
+Background book/root summaries contain only titles and summaries. Previous-root
+text is one plain-text block with section headings inline and passages in canonical
+reading order; provider-visible background has no IDs, version identifiers or target metadata.
+The book summary uses full canonical book text. Background clarifies references;
+target summaries are not derived from child summaries. Progress goes to stderr,
+and stdout reports the resulting book ID/content version as JSON.
+Source uses one reading-ordered `fragments` array of `{id, parent_id, kind, text}`;
+kind is `section` (heading) or `passage`, and parent IDs always name sections.
+Fragment identities include kind because section/passage IDs can overlap. Passage
+fragments map to the existing segment summary targets. Each target supplies an
+inclusive zero-based `end_fragment_index`; instructions forbid later evidence,
+including later identity revelations, and prioritize relevant preceding text.
+Section cutoffs include their entire subtree. Targets are requested in cutoff
+order, with passages before enclosing summaries at the same cutoff. This remains
+a prompt rule: full-root batching exposes later text, so semantic isolation cannot
+be guaranteed by the cutoff metadata or structural output validation.
+`--retries 0..2` defaults to one retry per batch;
+oversize context is not retried. Database writes are never retried automatically.
+Exit 1 means invalid input, unavailable source/provider or stale work; exit 3 means
+a database failure whose commit outcome should be inspected before retrying.
+
+Summary requests use the model's reported full output ceiling independently of the
+working batch target. Whole-book answers retain their existing response cap.
+
+Multi-request roots share an explicit provider cache when their context meets the
+configured model's 4,096-token caching minimum. Single-request scopes skip cache
+preparation. Caches start with a 20-minute TTL, renew before another request would
+approach expiry, and are explicitly deleted when that scope finishes or fails.
+An unusually long configured request timeout can require a longer renewal.
+Cache preparation/renewal failures use full canonical context directly; generation
+retries also stop using the cache. Failed cleanup leaves the TTL as a fallback.
+This uses ordinary generation requests, not the asynchronous Batch API.
+
+Results stay in memory until the complete set passes validation. Publication
+changes the book content version once; a clear changes it only when summaries
+were present. `book_summary_runs` records source fingerprints, running/completed/
+failed state, timestamps and model/policy/source-language provenance. Before any
+provider work, generation exits successfully if a job is already running or the
+accepted summaries match the current source, background, model and policy. Clearing
+summaries permits regeneration even when source text is unchanged.
+
+A new invocation marks running jobs at least four hours old failed and can start
+a replacement. Recovery runs only on invocation, using short SQLAlchemy transactions
+and the existing book write lock; no advisory lock, heartbeat or scheduler is used.
+The fingerprint covers canonical text/structure/IDs, relevant book metadata, series
+membership and earlier-book summary inputs, excluding content versions and generated
+current-book summaries. It is checked again at publication. Clear/purge invalidate
+running jobs; replaced workers stop before later provider work and cannot publish.
+Failures preserve accepted data. Purge removes summaries with canonical content.
+Generate books in series order to make earlier-book summaries available as context;
+missing summaries are explicit, and changed background dependencies reject late work.
+Summary reads use the existing catalog/content endpoints and client version
+refresh, including normal stale-position/reference and pagination rebuild rules.
+Whole-series summaries are deferred.
 
 ## Prepared content domain (phase 08)
 
