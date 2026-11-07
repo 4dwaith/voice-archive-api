@@ -39,10 +39,15 @@ class Settings(BaseSettings):
     pdf_max_bytes: PositiveInt = 1_500_000_000
     audio_max_bytes: PositiveInt = 1_500_000_000
     gemini_api_key: SecretStr | None = None
+    gemini_batch_api_key: SecretStr | None = None
     gemini_live_model: str = Field(default="gemini-3.8-live", min_length=1)
     gemini_text_model: Literal["gemini-3.8-flash"] = "gemini-3.8-flash"
     gemini_answer_input_tokens: PositiveInt = 1_000_000
     gemini_answer_timeout_seconds: PositiveInt = 90
+
+    @property
+    def effective_gemini_batch_api_key(self) -> SecretStr | None:
+        return self.gemini_batch_api_key or self.gemini_api_key
 
     @property
     def database_url(self) -> URL:

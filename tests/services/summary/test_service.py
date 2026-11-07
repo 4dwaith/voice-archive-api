@@ -29,7 +29,8 @@ def test_batched_roots_keep_full_context_and_carry_earlier_summaries(
     cache_events = []
     cached_source = None
     generation_attempts = 0
-    client.app.state.settings.gemini_api_key = SecretStr("provider-secret")
+    client.app.state.settings.gemini_batch_api_key = SecretStr("provider-batch-secret")
+    client.app.state.settings.gemini_api_key = SecretStr("provider-interactive-secret")
 
     async def respond(request):
         nonlocal cached_source, generation_attempts
@@ -80,10 +81,12 @@ def test_batched_roots_keep_full_context_and_carry_earlier_summaries(
         )
 
     def create_test_client(*, api_key, http_options):
+        assert api_key == "provider-batch-secret"
         http_options.async_client_args = {"transport": httpx.MockTransport(respond)}
         return Client(api_key=api_key, http_options=http_options)
 
     monkeypatch.setattr("voice_archive_api.services.library.provider.genai.Client", create_test_client)
+    monkeypatch.setattr("voice_archive_api.services.summary.cache.genai.Client", create_test_client)
 
     asyncio.run(
         summaries.generate_book_summaries(client.app.state.session_factory, client.app.state.settings, current_id)
@@ -206,3 +209,36 @@ def test_cleared_run_stops_before_another_provider_request(client, summary_book,
         assert db.get(Book, book_id).content_version == version
         assert db.get(Book, book_id).summary is None
         assert db.scalar(select(SummaryRun)).state == "failed"
+
+
+def test_summary_generation_succeeds_with_only_batch_key(client, summary_book, monkeypatch):
+    book_id, version = summary_book
+    factory = client.app.state.session_factory
+    client.app.state.settings.gemini_api_key = None
+    client.app.state.settings.gemini_batch_api_key = SecretStr("only-batch-secret")
+
+    async def generate_output(settings, instruction, parts, output_type, **options):
+        assert options.get("api_key") == SecretStr("only-batch-secret")
+        return output_type(
+            summaries=[
+                SummaryDraft(kind=target["kind"], id=target["id"], language="en", summary="A traveller returns home.")
+                for target in json.loads(parts[1])["TARGETS"]
+            ]
+        )
+
+    monkeypatch.setattr(summaries, "generate_structured_output", generate_output)
+
+    new_version = asyncio.run(summaries.generate_book_summaries(factory, client.app.state.settings, book_id))
+    assert new_version != version
+    with factory() as db:
+        assert db.get(Book, book_id).summary == "A traveller returns home."
+
+
+def test_summary_generation_fails_when_both_keys_are_missing(client, summary_book):
+    book_id, _ = summary_book
+    factory = client.app.state.session_factory
+    client.app.state.settings.gemini_api_key = None
+    client.app.state.settings.gemini_batch_api_key = None
+
+    with pytest.raises(ValueError, match="generation failed"):
+        asyncio.run(summaries.generate_book_summaries(factory, client.app.state.settings, book_id))

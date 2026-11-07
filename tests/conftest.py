@@ -16,6 +16,8 @@ from voice_archive_api.db.session import create_database_engine, get_db
 from voice_archive_api.file_handling import LocalStorage
 from voice_archive_api.main import create_app
 
+pytest_plugins = ["tests.summary_helpers"]
+
 
 @pytest.fixture(scope="session")
 def test_admin_engine() -> Generator[Engine]:

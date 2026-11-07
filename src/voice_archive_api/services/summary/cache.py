@@ -51,12 +51,13 @@ class SummaryCache:
 async def create_summary_cache(
     settings: Settings, instruction: str, source: str, *, enabled: bool
 ) -> AsyncIterator[SummaryCache | None]:
-    if not enabled or not settings.gemini_api_key:
+    batch_key = settings.effective_gemini_batch_api_key
+    if not enabled or not batch_key or not batch_key.get_secret_value():
         yield None
         return
     cache = None
     with genai.Client(
-        api_key=settings.gemini_api_key.get_secret_value(),
+        api_key=batch_key.get_secret_value(),
         http_options=types.HttpOptions(
             api_version="v1beta",
             timeout=settings.gemini_answer_timeout_seconds * 1000,

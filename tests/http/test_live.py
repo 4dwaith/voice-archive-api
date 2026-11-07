@@ -81,6 +81,7 @@ def test_live_token_locks_only_model_and_audio_in_sdk_request(schema_only_client
 
 def test_live_without_configuration_is_unavailable(schema_only_client, mock_gemini_client):
     schema_only_client.app.state.settings.gemini_api_key = None
+    schema_only_client.app.state.settings.gemini_batch_api_key = SecretStr("batch-only-secret")
 
     response = schema_only_client.post("/api/v1/live/token")
 

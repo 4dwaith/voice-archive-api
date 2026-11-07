@@ -58,7 +58,8 @@ def prepare_summary_book(client, summary_case):
 
 @given("the summary provider is available")
 def mock_summary_provider(client, summary_case, monkeypatch):
-    client.app.state.settings.gemini_api_key = SecretStr("provider-secret")
+    client.app.state.settings.gemini_batch_api_key = SecretStr("provider-batch-secret")
+    client.app.state.settings.gemini_api_key = SecretStr("provider-interactive-secret")
     factory = client.app.state.session_factory
 
     async def respond(request):
@@ -89,7 +90,7 @@ def mock_summary_provider(client, summary_case, monkeypatch):
         assert payload["systemInstruction"]["parts"][0]["text"] == SUMMARY_INSTRUCTIONS
         assert "summary" not in parts[0]
         if summary_case["reject"]:
-            return httpx.Response(403, json={"error": {"message": "provider-secret"}})
+            return httpx.Response(403, json={"error": {"message": "provider-batch-secret"}})
         result = {
             "summaries": [
                 SummaryDraft(
@@ -103,6 +104,7 @@ def mock_summary_provider(client, summary_case, monkeypatch):
         )
 
     def create_test_client(*, api_key, http_options):
+        assert api_key == "provider-batch-secret"
         http_options.async_client_args = {"transport": httpx.MockTransport(respond)}
         return Client(api_key=api_key, http_options=http_options)
 

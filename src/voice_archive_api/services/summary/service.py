@@ -292,6 +292,7 @@ async def generate_and_publish_summaries(
                             SUMMARY_INSTRUCTIONS,
                             [target_text] if cached_name else [source, target_text],
                             SummaryBatchDraft,
+                            api_key=settings.effective_gemini_batch_api_key,
                             max_output_tokens=None,
                             cached_content=cached_name,
                         )

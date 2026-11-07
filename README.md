@@ -325,7 +325,10 @@ uv run --env-file .env summarize-book generate --book-id 34
 uv run --env-file .env summarize-book clear --book-id 34
 ```
 
-Generation reuses `VOICE_ARCHIVE_GEMINI_API_KEY`, `VOICE_ARCHIVE_GEMINI_TEXT_MODEL`
+Summary generation and its cache calls use the server-only
+`VOICE_ARCHIVE_GEMINI_BATCH_API_KEY`, falling back to `VOICE_ARCHIVE_GEMINI_API_KEY`
+when the batch key is unset or empty. Live and book questions continue to use
+`VOICE_ARCHIVE_GEMINI_API_KEY`. Generation reuses `VOICE_ARCHIVE_GEMINI_TEXT_MODEL`
 and the existing Gemini input-token/timeout settings. Each root supplies complete
 canonical context; requests batch targets for an estimated 6,000-token response,
 with background from earlier book/root summaries and the previous root's full text.

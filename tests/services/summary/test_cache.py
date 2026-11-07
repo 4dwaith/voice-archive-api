@@ -15,7 +15,7 @@ from voice_archive_api.services.summary.cache import create_summary_cache
     "outcome", ["success", "too_small", "create_failure", "renew_failure", "delete_failure", "generation_failure"]
 )
 def test_cache_lifetime_and_optional_failure_fallback(monkeypatch, outcome):
-    settings = Settings(gemini_api_key=SecretStr("test-secret"))
+    settings = Settings(gemini_batch_api_key=SecretStr("batch-secret"))
     methods = []
 
     async def respond(request):
@@ -42,6 +42,7 @@ def test_cache_lifetime_and_optional_failure_fallback(monkeypatch, outcome):
         )
 
     def create_test_client(*, api_key, http_options):
+        assert api_key == "batch-secret"
         http_options.async_client_args = {"transport": httpx.MockTransport(respond)}
         return Client(api_key=api_key, http_options=http_options)
 
@@ -69,6 +70,40 @@ def test_cache_lifetime_and_optional_failure_fallback(monkeypatch, outcome):
     assert methods == (
         [] if outcome == "too_small" else ["POST"] if outcome == "create_failure" else ["POST", "PATCH", "DELETE"]
     )
+
+
+def test_cache_falls_back_to_interactive_api_key_when_batch_key_unset(monkeypatch):
+    settings = Settings(gemini_api_key=SecretStr("interactive-fallback-secret"), gemini_batch_api_key=None)
+
+    def create_test_client(*, api_key, http_options):
+        assert api_key == "interactive-fallback-secret"
+        async def respond(request):
+            return httpx.Response(200, json={"totalTokens": 100})
+        http_options.async_client_args = {"transport": httpx.MockTransport(respond)}
+        return Client(api_key=api_key, http_options=http_options)
+
+    monkeypatch.setattr("voice_archive_api.services.summary.cache.genai.Client", create_test_client)
+
+    async def use_cache():
+        async with create_summary_cache(settings, "Instruction", "Source", enabled=True) as cache:
+            assert cache is None
+
+    asyncio.run(use_cache())
+
+
+def test_cache_without_any_key_skips_client_creation(monkeypatch):
+    settings = Settings(gemini_api_key=None, gemini_batch_api_key=None)
+
+    def reject_client_creation(**kwargs):
+        pytest.fail("Missing keys must not instantiate Client")
+
+    monkeypatch.setattr("voice_archive_api.services.summary.cache.genai.Client", reject_client_creation)
+
+    async def use_cache():
+        async with create_summary_cache(settings, "Instruction", "Source", enabled=True) as cache:
+            assert cache is None
+
+    asyncio.run(use_cache())
 
 
 def test_single_request_scope_skips_all_cache_calls(monkeypatch):

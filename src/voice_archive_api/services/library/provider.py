@@ -4,7 +4,7 @@ import asyncio
 
 from google import genai
 from google.genai import types
-from pydantic import BaseModel
+from pydantic import BaseModel, SecretStr
 
 from voice_archive_api.core.config import Settings
 from voice_archive_api.logic.library import (
@@ -33,10 +33,12 @@ async def generate_structured_output[Output: BaseModel](
     output_type: type[Output],
     effort: str = "low",
     *,
+    api_key: SecretStr | None = None,
     max_output_tokens: int | None = 8192,
     cached_content: str | None = None,
 ) -> Output:
-    if not settings.gemini_api_key or not settings.gemini_api_key.get_secret_value():
+    target_key = api_key or settings.gemini_api_key
+    if not target_key or not target_key.get_secret_value():
         raise ValueError("Missing provider configuration")
     model = settings.gemini_text_model
     instructions = types.Content(parts=[types.Part(text=instruction)])
@@ -56,7 +58,7 @@ async def generate_structured_output[Output: BaseModel](
     )
     async with asyncio.timeout(settings.gemini_answer_timeout_seconds):
         with genai.Client(
-            api_key=settings.gemini_api_key.get_secret_value(),
+            api_key=target_key.get_secret_value(),
             http_options=types.HttpOptions(
                 api_version="v1beta",
                 timeout=settings.gemini_answer_timeout_seconds * 1000,

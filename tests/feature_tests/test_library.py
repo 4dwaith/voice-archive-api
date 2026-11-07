@@ -213,6 +213,7 @@ def prepare_source_change(answer_case, change):
 @given("the answer service has no credential")
 def clear_credential(client):
     client.app.state.settings.gemini_api_key = None
+    client.app.state.settings.gemini_batch_api_key = SecretStr("batch-only-secret")
 
 
 @given(parsers.parse("I want {effort} reasoning effort"))
