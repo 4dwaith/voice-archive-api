@@ -7,6 +7,7 @@ from sqlalchemy.orm import Session
 
 from voice_archive_api.db.models.content import BookSection, BookSegment
 from voice_archive_api.db.models.file import StoredFile
+from voice_archive_api.db.models.windows import RetrievalWindow
 from voice_archive_api.logic.files import FileKind
 from voice_archive_api.services.files import service as files
 
@@ -29,6 +30,7 @@ def delete_book_content_and_files(db: Session, book_id: int, *, include_cover: b
             .execution_options(populate_existing=True)
         )
     )
+    db.execute(delete(RetrievalWindow).where(RetrievalWindow.book_id == book_id))
     db.execute(delete(BookSegment).where(BookSegment.book_id == book_id))
     for record in records:
         record.book_id = None

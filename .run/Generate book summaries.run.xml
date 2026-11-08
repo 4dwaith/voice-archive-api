@@ -17,7 +17,7 @@
     <EXTENSION ID="PythonCoverageRunConfigurationExtension" runner="coverage.py" />
     <option name="RUN_TOOL" value="" />
     <option name="SCRIPT_NAME" value="voice_archive_api.cli.summaries" />
-    <option name="PARAMETERS" value="generate --book-id 46 --retries 2 --effort medium --log-level DEBUG" />
+    <option name="PARAMETERS" value="generate --book-id 31 --retries 2 --effort medium --log-level DEBUG" />
     <option name="SHOW_COMMAND_LINE" value="false" />
     <option name="EMULATE_TERMINAL" value="false" />
     <option name="MODULE_MODE" value="true" />

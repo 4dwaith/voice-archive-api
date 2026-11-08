@@ -42,6 +42,9 @@ class Settings(BaseSettings):
     gemini_batch_api_key: SecretStr | None = None
     gemini_live_model: str = Field(default="gemini-3.8-live", min_length=1)
     gemini_text_model: Literal["gemini-3.8-flash"] = "gemini-3.8-flash"
+    gemini_embedding_model: str = Field(default="gemini-embedding-2", min_length=1)
+    gemini_embedding_dimensions: PositiveInt = 768
+    embedding_input_format: str = Field(default="retrieval-document-v1", min_length=1)
     gemini_answer_input_tokens: PositiveInt = 1_000_000
     gemini_answer_timeout_seconds: PositiveInt = 90
 

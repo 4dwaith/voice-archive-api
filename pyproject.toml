@@ -20,10 +20,12 @@ dependencies = [
     "mutagen>=1.47,<2",
     "pillow>=12,<14",
     "psycopg[binary]>=3.3,<4",
+    "protobuf>=5,<8",
     "pydantic>=2.13.5,<3",
     "pydantic-settings>=2.11,<3",
     "pypdf>=6,<7",
     "python-multipart>=0.0.20,<1",
+    "sentencepiece>=0.2.1,<0.3",
     "sqlalchemy>=2.0,<3",
     "uvicorn[standard]>=0.37,<1",
 ]
@@ -80,4 +82,5 @@ ignore_missing_imports = true
 [project.scripts]
 import-book-content = "voice_archive_api.cli.content_import:main"
 summarize-book = "voice_archive_api.cli.summaries:main"
+build-book-windows = "voice_archive_api.cli.windows:main"
 

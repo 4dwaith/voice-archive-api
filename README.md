@@ -494,6 +494,46 @@ Summary reads use the existing catalog/content endpoints and client version
 refresh, including normal stale-position/reference and pagination rebuild rules.
 Whole-series summaries are deferred.
 
+## Retrieval windows (16.4 checkpoint 1)
+
+```powershell
+build-book-windows dry-run --book-id 34
+build-book-windows rebuild --book-id 34
+build-book-windows clear --book-id 34
+```
+
+Apply migration `0022_retrieval_windows` through the normal migration workflow
+before using this CLI. The CLI always uses Google's SDK Gemma 3 tokenizer, selected
+with its fixed `gemini-2.5-flash` tokenizer alias. This name does not change the
+configured embedding model. On first use, the SDK downloads the pinned tokenizer
+data from GitHub, validates its SHA-256 and caches it in the system temporary
+directory's `vertexai_tokenizer_model` folder. A fresh container or cleared cache
+requires another download. Token counting then runs locally; book text is not
+uploaded and no model API is called. There is no tokenizer option or environment
+setting. Counts are proxy estimates; the conservative budgets retain headroom
+below Embedding 2's input limit.
+
+Rebuild atomically replaces all windows and their planned embedding rows. It packs
+whole segments within contiguous section runs, assembles original and accepted
+English translations, and creates embedding rows with current input hashes and
+NULL vectors. Settings read `VOICE_ARCHIVE_GEMINI_EMBEDDING_MODEL`,
+`VOICE_ARCHIVE_GEMINI_EMBEDDING_DIMENSIONS`, and `VOICE_ARCHIVE_EMBEDDING_INPUT_FORMAT`
+from the environment; `.env.example` supplies `gemini-embedding-2`, 768 and
+`retrieval-document-v1`. The input-format setting identifies the document-format
+version; the implemented text format remains `title: {path} | text: {text}`.
+Non-English books require translations
+from `summarize-book` first. English regional variants need no translation.
+
+Complete-input budgets include paths, document formatting and a 16-token reserve:
+1,000 tokens by default, 1,500 for Kannada. `--window-tokens` accepts 32..4096;
+`--overlap-tokens` defaults to 125 and reuses whole segments only when they fit.
+Both representations must fit. An oversized segment fails without splitting or
+truncation and preserves existing data. Dry-run reports assembled windows without
+writes. JSON goes to stdout and errors
+to stderr. Clear/purge/delete remove windows and cascade to their embeddings.
+Canonical content and client `content_version` are unchanged. No provider calls,
+windowing job records, batch submission, result collection or answer changes.
+
 ## Prepared content domain (phase 08)
 
 The [canonical content guide](src/voice_archive_api/logic/content_validation/README.md) documents the v1 JSON Schema,
