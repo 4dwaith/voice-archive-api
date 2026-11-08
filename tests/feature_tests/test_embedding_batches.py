@@ -1,10 +1,11 @@
 import json
+from datetime import UTC, datetime, timedelta
 from uuid import UUID, uuid4
 
 import httpx
 from google.genai import Client
 from pydantic import SecretStr
-from pytest_bdd import given, scenarios, then, when
+from pytest_bdd import given, parsers, scenarios, then, when
 from sqlalchemy import select, text
 
 from voice_archive_api.cli import embeddings as cli
@@ -13,6 +14,7 @@ from voice_archive_api.db.models.content import BookSegment
 from voice_archive_api.db.models.embedding_batch import EmbeddingBatchJob, EmbeddingBatchRequest
 from voice_archive_api.db.models.windows import RetrievalWindow, WindowEmbedding
 from voice_archive_api.logic.windows import compute_embedding_input_hash
+from voice_archive_api.services.embedding_collection import collect_embedding_batches
 from voice_archive_api.services.windows import rebuild_book_windows
 
 scenarios("../features/windows/embedding_batches.feature")
@@ -33,6 +35,26 @@ def prepare_embedding_book(client, summary_book, monkeypatch):
     state = {"book_id": book_id, "mode": "success", "uploads": [], "submissions": []}
 
     def respond(request):
+        if request.method == "GET":
+            state.setdefault("reads", []).append(str(request.url))
+            if request.url.path.endswith("/batches"):
+                if state.get("listing") == "failure" and "pageToken" in request.url.params:
+                    return httpx.Response(503, json={"error": {"message": "batch-secret"}})
+                if "pageToken" not in request.url.params:
+                    return httpx.Response(200, json={"operations": [], "nextPageToken": "last"})
+                return httpx.Response(200, json={"operations": state.get("listed_jobs", [])})
+            if ":download" in request.url.path:
+                return httpx.Response(200, content=state["results"])
+            return httpx.Response(
+                200,
+                json={
+                    "name": "batches/accepted-1",
+                    "metadata": {
+                        "state": state.get("remote_state", "BATCH_STATE_RUNNING"),
+                        "output": {"responsesFile": "files/output"},
+                    },
+                },
+            )
         if request.url.path == "/upload/v1beta/files":
             if state["mode"] == "upload-failure":
                 return httpx.Response(403, json={"error": {"message": "batch-secret"}})
@@ -263,3 +285,95 @@ def verify_invalid_input_rejection(client, batch_case):
     with client.app.state.session_factory() as db:
         assert not db.scalars(select(EmbeddingBatchJob)).all()
         assert not db.scalars(select(EmbeddingBatchRequest)).all()
+
+
+@given("its submitted batch returns results", target_fixture="collection_results")
+def prepare_collection(client, batch_case, capsys):
+    submit_embeddings(batch_case, capsys)
+    batch_case["remote_state"] = "BATCH_STATE_SUCCEEDED"
+    results = [
+        {"key": row["key"], "response": {"embedding": {"values": [0.5 + index] * 768}}}
+        for index, row in enumerate(reversed(batch_case["uploads"][0]))
+    ]
+    batch_case["expected_vectors"] = {UUID(row["key"]): row["response"]["embedding"]["values"] for row in results}
+    return results
+
+
+@given(parsers.parse("the collection case is {case}"))
+def configure_collection_case(client, batch_case, collection_results, case):
+    factory = client.app.state.session_factory
+    if case == "request-error":
+        collection_results[0] = {"key": collection_results[0]["key"], "error": {"code": 3, "message": "invalid"}}
+    elif case == "changed":
+        with factory.begin() as db:
+            db.scalar(select(WindowEmbedding)).input_hash = "changed"
+    elif case == "deleted":
+        rebuild_book_windows(factory, client.app.state.settings, batch_case["book_id"], len)
+    elif case == "duplicate":
+        collection_results.append(collection_results[0])
+    elif case == "missing":
+        collection_results.pop()
+    elif case == "unknown":
+        collection_results[0]["key"] = str(uuid4())
+    elif case == "dimensions":
+        collection_results[0]["response"]["embedding"]["values"] = [0.5]
+    elif case == "nonfinite":
+        collection_results[0]["response"]["embedding"]["values"][0] = float("inf")
+    elif case == "boolean":
+        collection_results[0]["response"]["embedding"]["values"][0] = True
+    elif case == "zero":
+        collection_results[0]["response"]["embedding"]["values"] = [0.0] * 768
+    elif case in ("running", "failed", "cancelled", "expired"):
+        batch_case["remote_state"] = f"BATCH_STATE_{case.upper()}"
+    batch_case["results"] = "\n".join(json.dumps(row) for row in collection_results).encode()
+    if case in ("empty", "malformed"):
+        batch_case["results"] = b"" if case == "empty" else b"not json"
+
+
+@when("maintenance collects twice")
+def collect_twice(client, batch_case, caplog):
+    factory, settings = client.app.state.session_factory, client.app.state.settings
+
+    batch_case["collection_failures"] = collect_embedding_batches(factory, settings)
+    batch_case["repeat_failures"] = collect_embedding_batches(factory, settings)
+
+
+@then(parsers.parse("the batch is {state} with {vectors} vectors and {failures} collection failures"))
+def verify_collection(client, batch_case, state, vectors, failures):
+    assert batch_case["collection_failures"] == batch_case["repeat_failures"] == int(failures)
+    with client.app.state.session_factory() as db:
+        assert db.scalar(select(EmbeddingBatchJob.state)) == state
+        stored = db.execute(
+            select(WindowEmbedding, EmbeddingBatchRequest.id)
+            .join(EmbeddingBatchRequest, EmbeddingBatchRequest.embedding_id == WindowEmbedding.id)
+            .where(WindowEmbedding.vector.is_not(None))
+        ).all()
+        assert len(stored) == int(vectors)
+        for embedding, request_id in stored:
+            assert embedding.vector == batch_case["expected_vectors"][request_id]
+        assert all(request.active == (state == "submitted") for request in db.scalars(select(EmbeddingBatchRequest)))
+    if state.startswith("completed"):
+        assert sum(":download" in url for url in batch_case["reads"]) == 1
+
+
+@given(parsers.parse("an interrupted submission is {age} and its provider listing is {listing}"))
+def prepare_reconciliation(client, batch_case, capsys, age, listing):
+    batch_case["mode"] = "timeout"
+    submit_embeddings(batch_case, capsys)
+    batch_case["listing"] = listing
+    with client.app.state.session_factory.begin() as db:
+        batch = db.scalar(select(EmbeddingBatchJob))
+        batch.created_at = datetime.now(UTC) - timedelta(hours=1) if age == "old" else datetime.now(UTC)
+        batch_case["listed_jobs"] = (
+            [{"name": "batches/recovered", "metadata": {"displayName": str(batch.id)}}] if listing == "matched" else []
+        )
+
+
+@then(parsers.parse("its reconciliation state is {state} and claims are {active}"))
+def verify_reconciliation(client, batch_case, state, active):
+    with client.app.state.session_factory() as db:
+        batch = db.scalar(select(EmbeddingBatchJob))
+        assert batch.state == state
+        assert all(request.active == (active == "yes") for request in db.scalars(select(EmbeddingBatchRequest)))
+        if state == "submitted":
+            assert batch.provider_name == "batches/recovered"

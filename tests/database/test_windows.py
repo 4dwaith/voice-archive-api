@@ -1,13 +1,16 @@
 """Transaction rollback and foreign-key cascading for retrieval windows."""
 
+import json
 from concurrent.futures import ThreadPoolExecutor
 
 import pytest
 from sqlalchemy import delete, event, select
 
 from voice_archive_api.db.models.content import BookSegment
+from voice_archive_api.db.models.embedding_batch import EmbeddingBatchJob, EmbeddingBatchRequest
 from voice_archive_api.db.models.windows import RetrievalWindow, WindowEmbedding
 from voice_archive_api.services.embedding_batches import claim_embedding_batch
+from voice_archive_api.services.embedding_collection import publish_embedding_results
 from voice_archive_api.services.windows import rebuild_book_windows
 
 
@@ -75,3 +78,30 @@ def test_concurrent_batch_claims_do_not_duplicate_inputs(window_book):
         )
 
     assert sum(claim is not None for claim in claims) == 1
+
+
+def test_interrupted_collection_rolls_back_vectors_status_and_claims(client, window_book):
+    factory, settings, book_id = window_book
+    rebuild_book_windows(factory, settings, book_id, len)
+    batch_id, payload, _ = claim_embedding_batch(factory, book_id, settings.gemini_embedding_model)
+    with factory.begin() as db:
+        db.get(EmbeddingBatchJob, batch_id).state = "submitted"
+    results = "\n".join(
+        json.dumps({"key": row["key"], "response": {"embedding": {"values": [0.5] * 768}}})
+        for row in map(json.loads, payload.splitlines())
+    ).encode()
+
+    def interrupt_commit(db):
+        raise RuntimeError("Interrupted collection")
+
+    event.listen(factory, "before_commit", interrupt_commit)
+    try:
+        with pytest.raises(RuntimeError, match="Interrupted collection"):
+            publish_embedding_results(factory, settings, batch_id, results)
+    finally:
+        event.remove(factory, "before_commit", interrupt_commit)
+
+    with factory() as db:
+        assert all(row.vector is None for row in db.scalars(select(WindowEmbedding)))
+        assert db.get(EmbeddingBatchJob, batch_id).state == "submitted"
+        assert all(row.active for row in db.scalars(select(EmbeddingBatchRequest)))

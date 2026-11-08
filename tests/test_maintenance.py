@@ -50,7 +50,11 @@ def test_one_off_cleanup_attempts_all_jobs_and_disposes_engine(
     monkeypatch.setitem(maintenance.__dict__, "run_temporary_cleanup", temporary_cleanup)
     monkeypatch.setitem(maintenance.__dict__, "run_promoted_cleanup", promoted_cleanup)
     monkeypatch.setitem(maintenance.__dict__, "run_orphan_cleanup", orphan_cleanup)
-    assert maintenance.main() == exit_code
+    monkeypatch.setitem(maintenance.__dict__, "collect_embedding_batches", Mock(return_value=0))
+
+    result = maintenance.main()
+
+    assert result == exit_code
     temporary_cleanup.assert_called_once()
     promoted_cleanup.assert_called_once()
     orphan_cleanup.assert_called_once()
@@ -69,19 +73,24 @@ def test_scheduler_interrupt_shuts_down_and_disposes_engine(monkeypatch):
     engine.dispose.assert_called_once_with()
 
 
-@pytest.mark.parametrize("job", ["temporary", "promoted", "orphan"])
+@pytest.mark.parametrize("job", ["temporary", "promoted", "orphan", "embeddings"])
 def test_cli_selects_only_the_requested_job(monkeypatch, job):
     engine = Mock()
     create_engine = Mock(return_value=engine)
     temporary_cleanup = Mock(return_value=0)
     promoted_cleanup = Mock(return_value=CleanupResult())
     orphan_cleanup = Mock(return_value=CleanupResult())
+    embedding_collection = Mock(return_value=0)
     monkeypatch.setattr("sys.argv", ["maintenance", "--once", "--job", job])
     monkeypatch.setitem(maintenance.__dict__, "create_database_engine", create_engine)
     monkeypatch.setitem(maintenance.__dict__, "run_temporary_cleanup", temporary_cleanup)
     monkeypatch.setitem(maintenance.__dict__, "run_promoted_cleanup", promoted_cleanup)
     monkeypatch.setitem(maintenance.__dict__, "run_orphan_cleanup", orphan_cleanup)
-    assert maintenance.main() == 0
+    monkeypatch.setitem(maintenance.__dict__, "collect_embedding_batches", embedding_collection)
+
+    result = maintenance.main()
+
+    assert result == 0
     if job == "temporary":
         temporary_cleanup.assert_called_once()
         promoted_cleanup.assert_not_called()
@@ -92,10 +101,16 @@ def test_cli_selects_only_the_requested_job(monkeypatch, job):
         temporary_cleanup.assert_not_called()
         engine.dispose.assert_called_once_with()
         orphan_cleanup.assert_not_called()
-    else:
+    elif job == "orphan":
         orphan_cleanup.assert_called_once()
         temporary_cleanup.assert_not_called()
         promoted_cleanup.assert_not_called()
+        engine.dispose.assert_called_once_with()
+    else:
+        embedding_collection.assert_called_once()
+        temporary_cleanup.assert_not_called()
+        promoted_cleanup.assert_not_called()
+        orphan_cleanup.assert_not_called()
         engine.dispose.assert_called_once_with()
 
 
@@ -129,3 +144,24 @@ def test_job_failure_sets_exit_status_without_skipping_other_jobs(job, failure):
     assert maintenance.run_in_sequence(jobs["temporary"], jobs["promoted"], jobs["orphan"]) == 1
     for cleanup_job in jobs.values():
         cleanup_job.assert_called_once_with()
+
+
+def test_embedding_collection_runs_on_startup_and_its_own_interval():
+    now = datetime(2026, 11, 8, tzinfo=UTC)
+    collect = Mock(return_value=0)
+
+    scheduler = maintenance.build_scheduler(
+        None, None, None, now=now, embedding_job=collect, embedding_interval_seconds=180
+    )
+
+    job = scheduler.get_job("embedding-batch-collection")
+    assert job.next_run_time == now
+    assert job.trigger.interval.total_seconds() == 180
+    assert job.max_instances == 1 and job.coalesce
+
+
+@pytest.mark.parametrize("outcome", [1, RuntimeError("Provider unavailable")])
+def test_embedding_collection_failure_sets_maintenance_exit_status(outcome):
+    collect = Mock(side_effect=outcome) if isinstance(outcome, Exception) else Mock(return_value=outcome)
+
+    assert maintenance.run_in_sequence(None, None, None, collect) == 1

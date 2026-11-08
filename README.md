@@ -112,7 +112,7 @@ PostgreSQL uses the `postgres-data` volume; files use `uploads-data`, mounted at
 deletes both. Changing `.env` credentials does not update an existing database's
 users.
 
-The `maintenance` service runs three independent jobs at startup and daily at
+The `maintenance` service runs three file-cleanup jobs at startup and daily at
 midnight UTC. Scheduled jobs may run concurrently:
 
 - `temporary`: removes temporary files inactive for 24 hours.
@@ -141,8 +141,11 @@ incremental filesystem layout is deferred pending possible object storage.
 For an immediate run:
 `docker compose run --rm --no-deps maintenance python -m voice_archive_api.maintenance --once`.
 Use `--once --job temporary`, `--job promoted`, or `--job orphan` to select
-one job. The default `--job all` runs all three sequentially, attempting each even
-if another fails. Without `--once`, selected jobs run independently on their schedules.
+one cleanup job, or `--job embeddings` to collect embedding batches. The default
+`--job all` attempts all four jobs even if another fails. Without `--once`, cleanup
+runs daily and embedding collection runs every three minutes, both starting at
+startup. `VOICE_ARCHIVE_EMBEDDING_COLLECTION_INTERVAL_SECONDS` controls the collection
+interval. Selected jobs run independently on their schedules.
 
 ## Errors, request IDs, and OpenAPI
 
@@ -562,24 +565,40 @@ It neither builds windows nor generates translations or summaries.
 Claims are committed before provider work. No book/series locks remain held during
 network calls. Request mappings preserve submitted IDs/hashes even if source
 windows are rebuilt or the book is deleted. Repeated submission skips active
-claims; it does not poll or populate vectors. Result collection belongs to
-checkpoint 3.
+claims; the submission command does not poll or populate vectors. Maintenance
+collects results independently.
 
 Upload failure before batch creation and explicit provider rejection release
 claims for retry. Rejection diagnostics include Google's HTTP code, status and
 message, with configured API keys redacted. A lost
 creation response, server failure or interrupted local publication leaves the
 batch in `submitting` with active claims. The error reports its local UUID, also
-used as Google's display name. Reconcile that display name in Google's batch list
-before retrying: attach the accepted provider name and mark the local job
-`submitted`, or, only after confirming no batch was accepted, mark it `failed`
-and deactivate its request claims in one transaction. Automated reconciliation
-is not implemented; uncertain submissions never expire into automatic retries.
+used as Google's display name. Maintenance reconciles `submitting` batches after
+`VOICE_ARCHIVE_EMBEDDING_SUBMISSION_GRACE_SECONDS` (default 900 seconds). A complete
+provider listing attaches a unique matching display name, or marks an unmatched
+local job failed and releases its claims. Failed/incomplete scans and ambiguous
+matches retain claims. Reconciled batches are polled on the next collection run.
+The grace period is a practical recovery policy, not an idempotency guarantee:
+late provider visibility or a still-running submitter can permit duplicate work.
 Earlier successful model batches remain submitted if a later model fails.
 Uploaded files can remain until provider expiry. Batch creation sends a file
 reference instead of the full book payload. Exit code 1 reports configuration/input/
-submission failure; exit code 3 reports a database failure. No `--book-id=all`,
-maintenance polling, result collection or answer changes are included.
+submission failure; exit code 3 reports a database failure.
+
+Maintenance polls submitted batches and downloads keyed JSONL only after success.
+It validates finite, nonzero vectors and dimensions, and publishes only to existing
+embedding IDs whose current input hashes still match. Vectors, terminal batch state
+and claim release commit together. Repeated/concurrent collection is safe; deleted
+or changed targets are skipped. Explicit request errors leave their vectors empty,
+release claims and mark the batch `completed_with_errors`. Failed/cancelled/expired
+provider batches release claims and become `failed`. Provider calls hold no database
+locks. Malformed, incomplete or unavailable output retains the batch/claims for a
+later collection attempt and logs the cause; expired output can require operator
+intervention. No provider file cleanup is performed.
+
+For a one-off collection: `python -m voice_archive_api.maintenance --once --job embeddings`.
+No automatic submission/retry queue, batch size limiting, single-batch admission,
+`--book-id=all`, summary embeddings or answer changes are included in this review.
 
 ## Prepared content domain (phase 08)
 

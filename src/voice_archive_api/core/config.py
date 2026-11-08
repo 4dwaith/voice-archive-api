@@ -45,6 +45,8 @@ class Settings(BaseSettings):
     gemini_embedding_model: str = Field(default="gemini-embedding-2", min_length=1)
     gemini_embedding_dimensions: PositiveInt = 768
     embedding_input_format: str = Field(default="retrieval-document-v1", min_length=1)
+    embedding_submission_grace_seconds: PositiveInt = 900
+    embedding_collection_interval_seconds: PositiveInt = 180
     gemini_answer_input_tokens: PositiveInt = 1_000_000
     gemini_answer_timeout_seconds: PositiveInt = 90
 

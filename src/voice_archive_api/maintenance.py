@@ -1,4 +1,4 @@
-"""Run temporary, prepared-file, and orphan-file cleanup."""
+"""Run file cleanup and collect embedding batch results."""
 
 import argparse
 import logging
@@ -15,6 +15,7 @@ from voice_archive_api.core.logging import log_exception
 from voice_archive_api.db.session import create_database_engine, create_session_factory
 from voice_archive_api.file_handling import LocalStorage
 from voice_archive_api.file_handling.cleanup import run_temporary_cleanup
+from voice_archive_api.services.embedding_collection import collect_embedding_batches
 from voice_archive_api.services.files.cleanup import CleanupResult, run_orphan_cleanup, run_promoted_cleanup
 
 logger = logging.getLogger(__name__)
@@ -26,6 +27,8 @@ def build_scheduler(
     orphan_job: Callable[[], object] | None,
     *,
     now: datetime | None = None,
+    embedding_job: Callable[[], int] | None = None,
+    embedding_interval_seconds: int = 180,
 ) -> BlockingScheduler:
     scheduler = BlockingScheduler(timezone=UTC)
     first_run = now or datetime.now(UTC)
@@ -47,6 +50,17 @@ def build_scheduler(
             max_instances=1,
             misfire_grace_time=None,
         )
+    if embedding_job is not None:
+        scheduler.add_job(
+            embedding_job,
+            "interval",
+            seconds=embedding_interval_seconds,
+            id="embedding-batch-collection",
+            next_run_time=first_run,
+            coalesce=True,
+            max_instances=1,
+            misfire_grace_time=None,
+        )
     return scheduler
 
 
@@ -54,6 +68,7 @@ def run_in_sequence(
     temporary_job: Callable[[], int] | None,
     promoted_job: Callable[[], CleanupResult] | None,
     orphan_job: Callable[[], CleanupResult] | None,
+    embedding_job: Callable[[], int] | None = None,
 ) -> int:
     """Attempt each selected job even if another fails; return its combined exit status."""
     failed = False
@@ -77,17 +92,24 @@ def run_in_sequence(
         except Exception as exc:
             failed = True
             log_exception(logger, "Orphan-file cleanup failed", exc)
+    if embedding_job is not None:
+        try:
+            if embedding_job():
+                failed = True
+        except Exception as exc:
+            failed = True
+            log_exception(logger, "Embedding batch collection failed", exc)
     return int(failed)
 
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--once", action="store_true", help="Run cleanup once and exit (suitable for external cron)")
+    parser.add_argument("--once", action="store_true", help="Run selected jobs once and exit")
     parser.add_argument(
         "--job",
-        choices=("temporary", "promoted", "orphan", "all"),
+        choices=("temporary", "promoted", "orphan", "embeddings", "all"),
         default="all",
-        help="Select cleanup jobs (default: all)",
+        help="Select maintenance jobs (default: all)",
     )
     args = parser.parse_args()
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
@@ -107,9 +129,20 @@ def main() -> int:
             if factory is not None and args.job in {"orphan", "all"}
             else None
         )
+        embedding_job = (
+            partial(collect_embedding_batches, factory, settings)
+            if factory is not None and args.job in {"embeddings", "all"}
+            else None
+        )
         if args.once:
-            return run_in_sequence(temporary_job, promoted_job, orphan_job)
-        scheduler = build_scheduler(temporary_job, promoted_job, orphan_job)
+            return run_in_sequence(temporary_job, promoted_job, orphan_job, embedding_job)
+        scheduler = build_scheduler(
+            temporary_job,
+            promoted_job,
+            orphan_job,
+            embedding_job=partial(run_in_sequence, None, None, None, embedding_job) if embedding_job else None,
+            embedding_interval_seconds=settings.embedding_collection_interval_seconds,
+        )
 
         def stop(_signal: int | None = None, _frame: FrameType | None = None) -> None:
             if scheduler.running:

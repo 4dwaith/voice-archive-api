@@ -42,3 +42,41 @@ Feature: Submit missing window embeddings
     Given its stored input hash is stale
     When I submit its embeddings
     Then no batch is stored or sent
+
+  Scenario Outline: Collect keyed results safely and repeatedly
+    Given its submitted batch returns results
+    And the collection case is <case>
+    When maintenance collects twice
+    Then the batch is <state> with <vectors> vectors and <failures> collection failures
+
+    Examples:
+      | case          | state                 | vectors | failures |
+      | success       | completed             | 2       | 0        |
+      | request-error | completed_with_errors | 1       | 0        |
+      | changed       | completed             | 1       | 0        |
+      | deleted       | completed             | 0       | 0        |
+      | duplicate     | submitted             | 0       | 1        |
+      | missing       | submitted             | 0       | 1        |
+      | unknown       | submitted             | 0       | 1        |
+      | dimensions    | submitted             | 0       | 1        |
+      | nonfinite     | submitted             | 0       | 1        |
+      | boolean       | submitted             | 0       | 1        |
+      | zero          | submitted             | 0       | 1        |
+      | empty         | submitted             | 0       | 1        |
+      | malformed     | submitted             | 0       | 1        |
+      | running       | submitted             | 0       | 0        |
+      | failed        | failed                | 0       | 0        |
+      | cancelled     | failed                | 0       | 0        |
+      | expired       | failed                | 0       | 0        |
+
+  Scenario Outline: Reconcile interrupted submissions after the grace period
+    Given an interrupted submission is <age> and its provider listing is <listing>
+    When maintenance collects twice
+    Then its reconciliation state is <state> and claims are <active>
+
+    Examples:
+      | age | listing | state      | active |
+      | old | matched | submitted  | yes    |
+      | old | absent  | failed     | no     |
+      | old | failure | submitting | yes    |
+      | new | absent  | submitting | yes    |
