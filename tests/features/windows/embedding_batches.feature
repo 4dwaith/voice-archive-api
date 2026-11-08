@@ -12,6 +12,7 @@ Feature: Submit missing window embeddings
   Scenario: Submit multiple model and dimension profiles
     Given its window has additional model and dimension profiles
     When I submit its embeddings
+    And maintenance completes the current batch
     Then each model receives a keyed file preserving its request dimensions
 
   Scenario: Retry a failed upload
@@ -42,6 +43,50 @@ Feature: Submit missing window embeddings
     Given its stored input hash is stale
     When I submit its embeddings
     Then no batch is stored or sent
+
+  Scenario Outline: Isolate invalid input to its book
+    Given its embedding input is <problem>
+    And a healthy book is queued after this book
+    When maintenance advances the queue
+    Then only the invalid book fails and the healthy book is submitted
+
+    Examples:
+      | problem   |
+      | stale     |
+      | oversized |
+
+  Scenario: Isolate a book disappearing during locking
+    Given a healthy book is queued after this book
+    And the first book disappears while being locked
+    When maintenance advances the queue
+    Then only the invalid book fails and the healthy book is submitted
+
+  Scenario: Complete a book through bounded batches
+    Given the token budget fits one request
+    When I submit its embeddings twice
+    Then one request is active and the other is still pending
+    When maintenance completes the current batch
+    And maintenance completes the current batch
+    Then the book finishes automatically after two bounded batches
+
+  Scenario: Stop automatic retries after repeated rejection
+    Given the provider rejects batch creation
+    When I submit its embeddings
+    And maintenance retries until the attempt limit
+    Then automatic retries stop and the book is failed
+    When the provider recovers and I submit its embeddings
+    Then a new batch is submitted
+
+  Scenario: Retry only failed requests after collection
+    Given its submitted batch returns results
+    And the collection case is request-error
+    When maintenance advances the queue
+    Then only the failed request gets another attempt
+
+  Scenario: Share one global slot across operation kinds
+    Given another operation owns the global batch slot
+    When I submit its embeddings twice
+    Then embedding work stays queued without any provider submission
 
   Scenario Outline: Collect keyed results safely and repeatedly
     Given its submitted batch returns results

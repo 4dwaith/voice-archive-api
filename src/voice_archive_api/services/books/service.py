@@ -3,7 +3,6 @@ from contextlib import contextmanager
 from datetime import UTC, datetime
 from typing import Any
 
-from psycopg.errors import ForeignKeyViolation, UniqueViolation
 from sqlalchemy import func, select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
@@ -12,6 +11,7 @@ from voice_archive_api.core.errors import ApplicationError
 from voice_archive_api.db.constants import FOREIGN_KEY_BOOK_SERIES, UNIQUE_BOOK_IDENTITY, UNIQUE_BOOK_SERIES_INDEX
 from voice_archive_api.db.models.book import Book
 from voice_archive_api.db.models.file import StoredFile
+from voice_archive_api.db.operations import read_constraint_name
 from voice_archive_api.logic.books.validation import normalize_identity
 from voice_archive_api.logic.files import FileKind
 from voice_archive_api.services.book_cleanup import delete_book_content_and_files
@@ -63,9 +63,7 @@ def book_write(db: Session) -> Iterator[None]:
     except Exception as exc:
         db.rollback()
         if isinstance(exc, IntegrityError):
-            constraint = (
-                exc.orig.diag.constraint_name if isinstance(exc.orig, (UniqueViolation, ForeignKeyViolation)) else None
-            )
+            constraint = read_constraint_name(exc)
             errors = {
                 UNIQUE_BOOK_IDENTITY: DuplicateBook,
                 FOREIGN_KEY_BOOK_SERIES: SeriesNotFound,

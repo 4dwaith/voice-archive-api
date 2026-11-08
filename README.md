@@ -141,7 +141,7 @@ incremental filesystem layout is deferred pending possible object storage.
 For an immediate run:
 `docker compose run --rm --no-deps maintenance python -m voice_archive_api.maintenance --once`.
 Use `--once --job temporary`, `--job promoted`, or `--job orphan` to select
-one cleanup job, or `--job embeddings` to collect embedding batches. The default
+one cleanup job, or `--job embeddings` to collect results and advance the embedding queue. The default
 `--job all` attempts all four jobs even if another fails. Without `--once`, cleanup
 runs daily and embedding collection runs every three minutes, both starting at
 startup. `VOICE_ARCHIVE_EMBEDDING_COLLECTION_INTERVAL_SECONDS` controls the collection
@@ -190,7 +190,8 @@ To save coverage reports on the host:
 docker compose --profile test run --rm -v "./reports:/app/reports" tests pytest --cov=voice_archive_api --cov-report=term-missing --cov-report=html:reports/htmlcov --cov-report=xml:reports/coverage.xml
 ```
 
-For one quality command using the same test environment:
+For one quality command using the same test environment, with eight parallel
+pytest workers and work-stealing scheduling matching **Tests (parallel)**:
 
 ```powershell
 docker compose --profile test run --rm --build -v "./reports:/app/reports" tests python -m voice_archive_api.quality
@@ -545,28 +546,67 @@ to stderr. Clear/purge/delete remove windows and cascade to their embeddings.
 Canonical content and client `content_version` are unchanged. Window rebuilding
 makes no provider calls and stores no windowing job records.
 
-## Embedding batch submission (16.4 checkpoint 2)
+## Embedding batch queue (16.4)
 
 ```powershell
 submit-book-embeddings --book-id 34
 ```
 
-Apply migration `0023_embedding_batches` first. The command uses
-`VOICE_ARCHIVE_GEMINI_BATCH_API_KEY`, falling back to `VOICE_ARCHIVE_GEMINI_API_KEY`.
-It submits existing window embeddings with NULL vectors, excluding outstanding
-requests for the same embedding ID and input hash. Stored model/dimension values
-drive submission; requests are grouped into one asynchronous batch per model.
-The command uploads UTF-8 JSONL and reports local/provider batch IDs as JSON.
-Each JSONL request key is its stored request UUID; dimensions are specified per
-request. The uploaded file name is recorded on the batch. No inline payloads or
-positional result mappings are used.
-It neither builds windows nor generates translations or summaries.
+Apply migrations through `0025_batch_state_constraints` first. The command durably queues
+this book's current window embeddings and advances the oldest queued embedding
+work if the global batch slot is idle. It uses `VOICE_ARCHIVE_GEMINI_BATCH_API_KEY`,
+falling back to `VOICE_ARCHIVE_GEMINI_API_KEY`. JSON output includes the requested
+`book_id`, its queue `state` and any newly submitted `batches` (each identifies its
+own originating book). An empty batch list can mean the request is waiting behind
+other accepted work. Repeating the command while queued/running preserves its
+request time and retry budget. Repeating a failed/completed request starts a fresh
+retry budget; an already-complete book needs no provider calls.
 
-Claims are committed before provider work. No book/series locks remain held during
-network calls. Request mappings preserve submitted IDs/hashes even if source
-windows are rebuilt or the book is deleted. Repeated submission skips active
-claims; the submission command does not poll or populate vectors. Maintenance
-collects results independently.
+Maintenance collects results first, then submits at most one next group. One
+outstanding batch globally includes uncertain submissions, across books and
+operation kinds. Pre-existing open embedding batches also block admission until
+collected/reconciled. No project/model capacity accounting is performed. Each
+provider batch contains one stored model, with dimensions specified per request.
+Only the selected group receives batch/request rows; remaining NULL vectors are
+the pending work. Successful vectors are excluded from future attempts.
+
+`VOICE_ARCHIVE_EMBEDDING_BATCH_TOKENS` defaults to 150,000 estimated input tokens.
+The fixed Gemma 3 proxy tokenizer (`gemini-2.5-flash` SDK alias) counts complete
+formatted inputs, with 16 tokens of reserve per request. Initialization/download
+occurs outside database transactions; counting is local. This leaves substantial
+headroom below the observed 500,000-token provider quota, but estimates do not
+guarantee admission. Lower the budget if the provider still rejects it. A single
+input exceeding the configured batch budget fails the book job without truncation.
+
+`VOICE_ARCHIVE_EMBEDDING_MAX_ATTEMPTS` defaults to three attempts per embedding
+ID/current hash within the queued request. Upload failures, rejected batches,
+reconciled unmatched submissions and explicit failed results consume attempts.
+Uncertain outcomes retain the global slot until reconciliation. Automatic attempts
+occur on maintenance ticks; they stop when the budget is exhausted and mark the
+book job failed. Other queued books can then proceed. Invalid stored input also
+fails its book job with a diagnostic. Input-validation and expected book lookup/
+locking failures are contained per book: the same scan continues to healthy queued
+books without creating batch/request records for the failed input. Shared database
+failures still abort the scan, and uncertain provider work retains the global slot.
+Fix the cause and rerun the CLI to retry.
+
+Queue and embedding batch states are defined in `logic/batches.py` as `StrEnum`
+values, following the existing file-kind convention. SQLAlchemy validates state
+strings on writes and database check constraints reject invalid direct SQL writes.
+`db/operations.py` contains the PostgreSQL lock, wall-clock, identity-sequence and
+driver-diagnostic details; its advisory-lock comment explains cooperative locking
+and transaction lifetime.
+
+The shared `book_batch_jobs` table records `(book_id, kind)`, state, request time
+and active batch UUID. `services/batch_queue.py` supplies shared enrollment,
+transactional queue locking and batch-ID-specific slot release. Future summary
+batching can reuse this coordination, with its own input/result handling; current
+summarization behavior is unchanged. Operational rows survive book deletion until
+outstanding work is collected. Queue transactions acquire the global advisory
+lock before domain/queue row locks. Provider I/O holds no database locks. Request
+mappings retain submitted embedding IDs/hashes through source rebuild/deletion.
+The file-based SDK path uploads UTF-8 JSONL with request UUID keys and records the
+uploaded file name. It neither rebuilds windows nor generates translations/summaries.
 
 Upload failure before batch creation and explicit provider rejection release
 claims for retry. Rejection diagnostics include Google's HTTP code, status and
@@ -580,7 +620,7 @@ local job failed and releases its claims. Failed/incomplete scans and ambiguous
 matches retain claims. Reconciled batches are polled on the next collection run.
 The grace period is a practical recovery policy, not an idempotency guarantee:
 late provider visibility or a still-running submitter can permit duplicate work.
-Earlier successful model batches remain submitted if a later model fails.
+Completed groups keep their vectors if a later group fails.
 Uploaded files can remain until provider expiry. Batch creation sends a file
 reference instead of the full book payload. Exit code 1 reports configuration/input/
 submission failure; exit code 3 reports a database failure.
@@ -588,7 +628,7 @@ submission failure; exit code 3 reports a database failure.
 Maintenance polls submitted batches and downloads keyed JSONL only after success.
 It validates finite, nonzero vectors and dimensions, and publishes only to existing
 embedding IDs whose current input hashes still match. Vectors, terminal batch state
-and claim release commit together. Repeated/concurrent collection is safe; deleted
+and claim/global-slot release commit together. Repeated/concurrent collection is safe; deleted
 or changed targets are skipped. Explicit request errors leave their vectors empty,
 release claims and mark the batch `completed_with_errors`. Failed/cancelled/expired
 provider batches release claims and become `failed`. Provider calls hold no database
@@ -596,9 +636,9 @@ locks. Malformed, incomplete or unavailable output retains the batch/claims for 
 later collection attempt and logs the cause; expired output can require operator
 intervention. No provider file cleanup is performed.
 
-For a one-off collection: `python -m voice_archive_api.maintenance --once --job embeddings`.
-No automatic submission/retry queue, batch size limiting, single-batch admission,
-`--book-id=all`, summary embeddings or answer changes are included in this review.
+For a one-off collection and queue advance: `python -m voice_archive_api.maintenance --once --job embeddings`.
+No `--book-id=all`, conversion of summary generation to provider batches, summary
+embeddings or answer changes are included in this review.
 
 ## Prepared content domain (phase 08)
 

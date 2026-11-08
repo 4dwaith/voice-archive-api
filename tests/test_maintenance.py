@@ -50,7 +50,7 @@ def test_one_off_cleanup_attempts_all_jobs_and_disposes_engine(
     monkeypatch.setitem(maintenance.__dict__, "run_temporary_cleanup", temporary_cleanup)
     monkeypatch.setitem(maintenance.__dict__, "run_promoted_cleanup", promoted_cleanup)
     monkeypatch.setitem(maintenance.__dict__, "run_orphan_cleanup", orphan_cleanup)
-    monkeypatch.setitem(maintenance.__dict__, "collect_embedding_batches", Mock(return_value=0))
+    monkeypatch.setitem(maintenance.__dict__, "run_embedding_maintenance", Mock(return_value=0))
 
     result = maintenance.main()
 
@@ -86,7 +86,7 @@ def test_cli_selects_only_the_requested_job(monkeypatch, job):
     monkeypatch.setitem(maintenance.__dict__, "run_temporary_cleanup", temporary_cleanup)
     monkeypatch.setitem(maintenance.__dict__, "run_promoted_cleanup", promoted_cleanup)
     monkeypatch.setitem(maintenance.__dict__, "run_orphan_cleanup", orphan_cleanup)
-    monkeypatch.setitem(maintenance.__dict__, "collect_embedding_batches", embedding_collection)
+    monkeypatch.setitem(maintenance.__dict__, "run_embedding_maintenance", embedding_collection)
 
     result = maintenance.main()
 

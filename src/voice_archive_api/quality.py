@@ -12,6 +12,11 @@ def main() -> int:
         ("mypy",),
         (
             "pytest",
+            "-n",
+            "8",
+            "--dist",
+            "worksteal",
+            "--basetemp=.pytest-tmp-parallel",
             "--cov=voice_archive_api",
             "--cov-report=term-missing",
             "--cov-report=html:reports/htmlcov",

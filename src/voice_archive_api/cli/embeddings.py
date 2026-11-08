@@ -1,4 +1,4 @@
-"""Submit missing window embeddings to Google's asynchronous Batch API."""
+"""Queue a book for sequential embedding batches, submitting the first group if idle."""
 
 import argparse
 import json
@@ -12,7 +12,8 @@ from voice_archive_api.core.config import Settings
 from voice_archive_api.core.errors import ApplicationError
 from voice_archive_api.core.logging import log_exception
 from voice_archive_api.db.session import create_database_engine, create_session_factory
-from voice_archive_api.services.embedding_batches import submit_book_embedding_batches
+from voice_archive_api.logic.batches import BookBatchJobState
+from voice_archive_api.services.embeddings.service import submit_book_embedding_batches
 
 logger = logging.getLogger(__name__)
 
@@ -32,11 +33,11 @@ def run(argv: list[str] | None = None) -> int:
             return 1
         engine = create_database_engine(settings.database_url)
         try:
-            batches = submit_book_embedding_batches(create_session_factory(engine), settings, args.book_id)
+            result = submit_book_embedding_batches(create_session_factory(engine), settings, args.book_id)
         finally:
             engine.dispose()
-        print(json.dumps({"book_id": args.book_id, "batches": batches}))
-        return 0
+        print(json.dumps(result))
+        return int(result["state"] == BookBatchJobState.FAILED)
     except ApplicationError as exc:
         print(exc.message, file=sys.stderr)
     except ValueError as exc:

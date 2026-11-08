@@ -15,6 +15,8 @@ from voice_archive_api.core.config import Settings
 from voice_archive_api.core.logging import log_exception
 from voice_archive_api.db.models.embedding_batch import EmbeddingBatchJob, EmbeddingBatchRequest
 from voice_archive_api.db.models.windows import WindowEmbedding
+from voice_archive_api.logic.batches import EmbeddingBatchState
+from voice_archive_api.services.batch_queue import release_batch_queue_slot
 
 logger = logging.getLogger(__name__)
 
@@ -47,7 +49,7 @@ def publish_embedding_results(
 
     with factory.begin() as db:
         batch = db.get(EmbeddingBatchJob, batch_id, with_for_update=True)
-        if batch is None or batch.state != "submitted":
+        if batch is None or batch.state != EmbeddingBatchState.SUBMITTED:
             return
 
         requests = db.scalars(select(EmbeddingBatchRequest).where(EmbeddingBatchRequest.batch_id == batch_id)).all()
@@ -79,7 +81,8 @@ def publish_embedding_results(
             if embedding.vector is None:
                 embedding.vector = vector
 
-        batch.state = "completed_with_errors" if failures else "completed"
+        batch.state = EmbeddingBatchState.COMPLETED_WITH_ERRORS if failures else EmbeddingBatchState.COMPLETED
+        release_batch_queue_slot(db, batch_id)
 
         for request in requests:
             request.active = False
@@ -96,13 +99,14 @@ def reconcile_embedding_submission(
         raise ValueError(f"Cannot uniquely reconcile embedding batch: batch={batch_id}")
     with factory.begin() as db:
         batch = db.get(EmbeddingBatchJob, batch_id, with_for_update=True)
-        if batch is None or batch.state != "submitting" or batch.provider_name is not None:
+        if batch is None or batch.state != EmbeddingBatchState.SUBMITTING or batch.provider_name is not None:
             return
         if matches:
             batch.provider_name = matches[0].name
-            batch.state = "submitted"
+            batch.state = EmbeddingBatchState.SUBMITTED
         else:
-            batch.state = "failed"
+            batch.state = EmbeddingBatchState.FAILED
+            release_batch_queue_slot(db, batch_id)
             db.execute(
                 update(EmbeddingBatchRequest).where(EmbeddingBatchRequest.batch_id == batch_id).values(active=False)
             )
@@ -112,7 +116,9 @@ def collect_embedding_batches(factory: sessionmaker[Session], settings: Settings
     """Return the number of collection/reconciliation failures; never submit work."""
     with factory() as db:
         batches = db.scalars(
-            select(EmbeddingBatchJob).where(EmbeddingBatchJob.state.in_(("submitting", "submitted")))
+            select(EmbeddingBatchJob).where(
+                EmbeddingBatchJob.state.in_((EmbeddingBatchState.SUBMITTING, EmbeddingBatchState.SUBMITTED))
+            )
         ).all()
 
     if not batches:
@@ -134,7 +140,7 @@ def collect_embedding_batches(factory: sessionmaker[Session], settings: Settings
         ),
     ) as client:
         provider_jobs = None
-        if any(batch.state == "submitting" and batch.created_at <= cutoff for batch in batches):
+        if any(batch.state == EmbeddingBatchState.SUBMITTING and batch.created_at <= cutoff for batch in batches):
             try:
                 # Exhaust pagination before treating absence as evidence of non-acceptance.
                 pager = client.batches.list()
@@ -148,7 +154,7 @@ def collect_embedding_batches(factory: sessionmaker[Session], settings: Settings
 
         for batch in batches:
             try:
-                if batch.state == "submitting":
+                if batch.state == EmbeddingBatchState.SUBMITTING:
                     if batch.created_at <= cutoff and provider_jobs is not None:
                         reconcile_embedding_submission(factory, batch.id, provider_jobs)
                     continue
@@ -186,8 +192,9 @@ def collect_embedding_batches(factory: sessionmaker[Session], settings: Settings
                         )
                     with factory.begin() as db:
                         current = db.get(EmbeddingBatchJob, batch.id, with_for_update=True)
-                        if current is not None and current.state == "submitted":
-                            current.state = "failed"
+                        if current is not None and current.state == EmbeddingBatchState.SUBMITTED:
+                            current.state = EmbeddingBatchState.FAILED
+                            release_batch_queue_slot(db, batch.id)
                             db.execute(
                                 update(EmbeddingBatchRequest)
                                 .where(EmbeddingBatchRequest.batch_id == batch.id)

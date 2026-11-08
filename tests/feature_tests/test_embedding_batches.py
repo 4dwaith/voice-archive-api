@@ -1,5 +1,6 @@
 import json
 from datetime import UTC, datetime, timedelta
+from types import SimpleNamespace
 from uuid import UUID, uuid4
 
 import httpx
@@ -9,12 +10,20 @@ from pytest_bdd import given, parsers, scenarios, then, when
 from sqlalchemy import select, text
 
 from voice_archive_api.cli import embeddings as cli
+from voice_archive_api.db.models.batch_queue import BookBatchJob
 from voice_archive_api.db.models.book import Book
 from voice_archive_api.db.models.content import BookSegment
 from voice_archive_api.db.models.embedding_batch import EmbeddingBatchJob, EmbeddingBatchRequest
 from voice_archive_api.db.models.windows import RetrievalWindow, WindowEmbedding
 from voice_archive_api.logic.windows import compute_embedding_input_hash
-from voice_archive_api.services.embedding_collection import collect_embedding_batches
+from voice_archive_api.services.books.service import BookNotFound
+from voice_archive_api.services.embeddings import submit_batches
+from voice_archive_api.services.embeddings.collect_results import collect_embedding_batches
+from voice_archive_api.services.embeddings.service import run_embedding_maintenance
+from voice_archive_api.services.embeddings.submit_batches import (
+    enqueue_book_embeddings,
+    submit_next_embedding_batch,
+)
 from voice_archive_api.services.windows import rebuild_book_windows
 
 scenarios("../features/windows/embedding_batches.feature")
@@ -96,8 +105,12 @@ def prepare_embedding_book(client, summary_book, monkeypatch):
         http_options.client_args = {"transport": httpx.MockTransport(respond)}
         return Client(api_key=api_key, http_options=http_options)
 
-    monkeypatch.setattr("voice_archive_api.services.embedding_batches.genai.Client", create_test_client)
+    monkeypatch.setattr("voice_archive_api.services.embeddings.submit_batches.genai.Client", create_test_client)
     monkeypatch.setitem(cli.__dict__, "Settings", lambda: settings)
+    monkeypatch.setattr(
+        "voice_archive_api.services.embeddings.submit_batches.LocalTokenizer",
+        lambda model: SimpleNamespace(count_tokens=lambda text: SimpleNamespace(total_tokens=len(text))),
+    )
 
     return state
 
@@ -280,11 +293,158 @@ def verify_replaced_targets(client, batch_case):
 @then("no batch is stored or sent")
 def verify_invalid_input_rejection(client, batch_case):
     assert batch_case["exit_code"] == 1
-    assert "hash does not match" in batch_case["output"].err
+    assert json.loads(batch_case["output"].out)["state"] == "failed"
     assert batch_case["uploads"] == batch_case["submissions"] == []
     with client.app.state.session_factory() as db:
         assert not db.scalars(select(EmbeddingBatchJob)).all()
         assert not db.scalars(select(EmbeddingBatchRequest)).all()
+
+
+@given(parsers.parse("its embedding input is {problem}"))
+def invalidate_book_embedding_input(client, problem):
+    settings = client.app.state.settings
+    settings.embedding_batch_tokens = 100
+    with client.app.state.session_factory.begin() as db:
+        embedding = db.scalar(select(WindowEmbedding).where(WindowEmbedding.kind == "primary"))
+        if problem == "stale":
+            embedding.input_hash = "stale"
+        else:
+            window = db.get(RetrievalWindow, embedding.window_id)
+            window.primary_text = "x" * 200
+            embedding.input_hash = compute_embedding_input_hash(
+                window.path,
+                window.primary_text,
+                model=embedding.model,
+                dimensions=embedding.dimensions,
+                input_format=embedding.input_format,
+            )
+
+
+@given("a healthy book is queued after this book")
+def enqueue_healthy_book(client, batch_case):
+    factory, settings = client.app.state.session_factory, client.app.state.settings
+    enqueue_book_embeddings(factory, batch_case["book_id"])
+    healthy_id = client.post("/api/v1/books", json={"title": "Healthy", "language": "en"}).json()["id"]
+    response = client.post(
+        f"/api/v1/books/{healthy_id}/content-imports",
+        json={
+            "schema_version": 1,
+            "sections": [],
+            "segments": [{"source_key": "a", "sequence": 0, "kind": "prose", "html_content": "<p>OK</p>"}],
+        },
+    )
+    assert response.status_code == 200
+    rebuild_book_windows(factory, settings, healthy_id, len)
+    enqueue_book_embeddings(factory, healthy_id)
+    batch_case["healthy_id"] = healthy_id
+
+
+@then("only the invalid book fails and the healthy book is submitted")
+def verify_isolated_book_failure(client, batch_case):
+    assert len(batch_case["submissions"]) == 1
+    with client.app.state.session_factory() as db:
+        assert db.get(BookBatchJob, (batch_case["book_id"], "embeddings")).state == "failed"
+        assert db.get(BookBatchJob, (batch_case["healthy_id"], "embeddings")).state == "running"
+        batch = db.scalars(select(EmbeddingBatchJob)).one()
+        assert batch.book_id == batch_case["healthy_id"]
+        assert db.scalars(select(EmbeddingBatchRequest.batch_id)).all() == [batch.id]
+
+
+@given("the first book disappears while being locked")
+def remove_book_during_lock(batch_case, monkeypatch):
+    lock_book = submit_batches.lock_book_for_series_write
+
+    def lock_available_book(db, book_id, changes):
+        if book_id == batch_case["book_id"]:
+            raise BookNotFound
+        return lock_book(db, book_id, changes)
+
+    monkeypatch.setattr(submit_batches, "lock_book_for_series_write", lock_available_book)
+
+
+@given("the token budget fits one request")
+def limit_embedding_batch(client):
+    client.app.state.settings.embedding_batch_tokens = 100
+
+
+@when("maintenance completes the current batch")
+def complete_current_batch(client, batch_case):
+    batch_case["remote_state"] = "BATCH_STATE_SUCCEEDED"
+    batch_case["results"] = "\n".join(
+        json.dumps(
+            {"key": row["key"], "response": {"embedding": {"values": [0.5] * row["request"]["output_dimensionality"]}}}
+        )
+        for row in batch_case["uploads"][-1]
+    ).encode()
+
+    failures = run_embedding_maintenance(client.app.state.session_factory, client.app.state.settings)
+
+    assert failures == 0
+
+
+@when("maintenance advances the queue")
+def advance_embedding_queue(client):
+    failures = run_embedding_maintenance(client.app.state.session_factory, client.app.state.settings)
+
+    assert failures == 0
+
+
+@then("only the failed request gets another attempt")
+def verify_failed_request_retry(client, batch_case):
+    assert [len(rows) for rows in batch_case["uploads"]] == [2, 1]
+    failed_key = UUID(json.loads(batch_case["results"].splitlines()[0])["key"])
+    retry_key = UUID(batch_case["uploads"][1][0]["key"])
+    with client.app.state.session_factory() as db:
+        assert (
+            db.get(EmbeddingBatchRequest, failed_key).embedding_id
+            == db.get(EmbeddingBatchRequest, retry_key).embedding_id
+        )
+
+
+@then("one request is active and the other is still pending")
+def verify_bounded_claim(client, batch_case):
+    assert len(batch_case["uploads"]) == 1
+    assert len(batch_case["uploads"][0]) == 1
+    with client.app.state.session_factory() as db:
+        assert len(db.scalars(select(EmbeddingBatchRequest)).all()) == 1
+        assert db.get(BookBatchJob, (batch_case["book_id"], "embeddings")).state == "running"
+
+
+@then("the book finishes automatically after two bounded batches")
+def verify_finished_queue(client, batch_case):
+    assert [len(rows) for rows in batch_case["uploads"]] == [1, 1]
+    with client.app.state.session_factory() as db:
+        assert db.get(BookBatchJob, (batch_case["book_id"], "embeddings")).state == "completed"
+        assert all(row.vector is not None for row in db.scalars(select(WindowEmbedding)))
+        assert not any(db.scalars(select(EmbeddingBatchRequest.active)))
+
+
+@when("maintenance retries until the attempt limit")
+def exhaust_submission_attempts(client, batch_case):
+    for _ in range(client.app.state.settings.embedding_max_attempts):
+        run_embedding_maintenance(client.app.state.session_factory, client.app.state.settings)
+
+
+@then("automatic retries stop and the book is failed")
+def verify_retry_limit(client, batch_case):
+    assert len(batch_case["submissions"]) == client.app.state.settings.embedding_max_attempts
+    with client.app.state.session_factory() as db:
+        assert db.get(BookBatchJob, (batch_case["book_id"], "embeddings")).state == "failed"
+
+    assert submit_next_embedding_batch(client.app.state.session_factory, client.app.state.settings) == []
+
+
+@given("another operation owns the global batch slot")
+def occupy_shared_slot(client, batch_case):
+    with client.app.state.session_factory.begin() as db:
+        db.add(BookBatchJob(book_id=batch_case["book_id"], kind="summaries", state="running", active_batch_id=uuid4()))
+
+
+@then("embedding work stays queued without any provider submission")
+def verify_shared_slot_blocks_embeddings(client, batch_case):
+    assert batch_case["uploads"] == batch_case["submissions"] == []
+    with client.app.state.session_factory() as db:
+        assert db.get(BookBatchJob, (batch_case["book_id"], "embeddings")).state == "queued"
 
 
 @given("its submitted batch returns results", target_fixture="collection_results")
@@ -292,7 +452,10 @@ def prepare_collection(client, batch_case, capsys):
     submit_embeddings(batch_case, capsys)
     batch_case["remote_state"] = "BATCH_STATE_SUCCEEDED"
     results = [
-        {"key": row["key"], "response": {"embedding": {"values": [0.5 + index] * 768}}}
+        {
+            "key": row["key"],
+            "response": {"embedding": {"values": [0.5 + index] * row["request"]["output_dimensionality"]}},
+        }
         for index, row in enumerate(reversed(batch_case["uploads"][0]))
     ]
     batch_case["expected_vectors"] = {UUID(row["key"]): row["response"]["embedding"]["values"] for row in results}

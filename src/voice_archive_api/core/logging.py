@@ -5,11 +5,11 @@ import os
 from traceback import extract_tb
 
 from asgi_correlation_id import CorrelationIdFilter
-from psycopg import Error as PostgreSQLError
 from pydantic import SecretStr, ValidationError
 from sqlalchemy.exc import StatementError
 
 from voice_archive_api.core.config import Settings
+from voice_archive_api.db.operations import read_database_error_reason
 
 
 def log_exception(
@@ -34,11 +34,7 @@ def log_exception(
         elif isinstance(current, StatementError):
             original = current.orig
             seen.add(id(original))  # Its driver diagnostic is included here, without SQL/parameters.
-            primary = getattr(getattr(original, "diag", None), "message_primary", None)
-            driver_message = primary or (
-                str(original) if isinstance(original, PostgreSQLError) else "Driver message unavailable"
-            )
-            reason = f"{type(original).__name__} SQLSTATE={getattr(original, 'sqlstate', None)}: {driver_message}"
+            reason = read_database_error_reason(current)
         else:
             reason = str(current)
         locations = "\n".join(

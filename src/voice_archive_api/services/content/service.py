@@ -7,13 +7,14 @@ from itertools import batched
 from typing import Any
 from uuid import uuid4
 
-from sqlalchemy import func, insert, select, text, update
+from sqlalchemy import func, insert, select, update
 from sqlalchemy.orm import Session
 
 from voice_archive_api.core.errors import ApplicationError
 from voice_archive_api.db.models.content import BookSection, BookSegment
 from voice_archive_api.db.models.file import StoredFile
 from voice_archive_api.db.models.summary import SummaryGenerationRun
+from voice_archive_api.db.operations import allocate_identity_values
 from voice_archive_api.logic.content_validation.assets import referenced_file_ids, validate_assets
 from voice_archive_api.logic.content_validation.schemas import ContentInput, SectionInput
 from voice_archive_api.logic.content_validation.validation import (
@@ -98,10 +99,7 @@ def publish(db: Session, book_id: int, validated: ValidatedContent, *, dry_run: 
 
 
 def allocate_section_ids(db: Session, source_keys: list[str]) -> dict[str, int]:
-    ids = db.scalars(
-        text("SELECT nextval(pg_get_serial_sequence('sections', 'id')) FROM generate_series(1, :count)"),
-        {"count": len(source_keys)},
-    )
+    ids = allocate_identity_values(db, "sections", "id", len(source_keys))
     return dict(zip(source_keys, ids, strict=True))
 
 

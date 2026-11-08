@@ -15,7 +15,7 @@ from voice_archive_api.core.logging import log_exception
 from voice_archive_api.db.session import create_database_engine, create_session_factory
 from voice_archive_api.file_handling import LocalStorage
 from voice_archive_api.file_handling.cleanup import run_temporary_cleanup
-from voice_archive_api.services.embedding_collection import collect_embedding_batches
+from voice_archive_api.services.embeddings.service import run_embedding_maintenance
 from voice_archive_api.services.files.cleanup import CleanupResult, run_orphan_cleanup, run_promoted_cleanup
 
 logger = logging.getLogger(__name__)
@@ -130,7 +130,7 @@ def main() -> int:
             else None
         )
         embedding_job = (
-            partial(collect_embedding_batches, factory, settings)
+            partial(run_embedding_maintenance, factory, settings)
             if factory is not None and args.job in {"embeddings", "all"}
             else None
         )

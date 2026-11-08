@@ -7,6 +7,7 @@ from sqlalchemy import (
     BigInteger,
     Boolean,
     DateTime,
+    Enum,
     ForeignKey,
     Index,
     Text,
@@ -17,6 +18,7 @@ from sqlalchemy import (
 from sqlalchemy.orm import Mapped, mapped_column
 
 from voice_archive_api.db.base import Base
+from voice_archive_api.logic.batches import EmbeddingBatchState
 
 
 class EmbeddingBatchJob(Base):
@@ -25,7 +27,16 @@ class EmbeddingBatchJob(Base):
     id: Mapped[UUID] = mapped_column(Uuid, primary_key=True)
     book_id: Mapped[int] = mapped_column(BigInteger)
     model: Mapped[str] = mapped_column(Text)
-    state: Mapped[str] = mapped_column(Text)
+    state: Mapped[EmbeddingBatchState] = mapped_column(
+        Enum(
+            EmbeddingBatchState,
+            native_enum=False,
+            create_constraint=True,
+            validate_strings=True,
+            values_callable=lambda members: [member.value for member in members],
+            name="embedding_batch_job_state",
+        )
+    )
     provider_name: Mapped[str | None] = mapped_column(Text, unique=True)
     input_file_name: Mapped[str | None] = mapped_column(Text)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())

@@ -1,5 +1,6 @@
 """Register complete model metadata for migrations and application sessions."""
 
+from voice_archive_api.db.models.batch_queue import BookBatchJob
 from voice_archive_api.db.models.book import Book
 from voice_archive_api.db.models.content import BookSection, BookSegment
 from voice_archive_api.db.models.embedding_batch import EmbeddingBatchJob, EmbeddingBatchRequest
@@ -22,4 +23,5 @@ __all__ = [
     "WindowEmbedding",
     "EmbeddingBatchJob",
     "EmbeddingBatchRequest",
+    "BookBatchJob",
 ]

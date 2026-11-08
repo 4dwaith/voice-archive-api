@@ -47,6 +47,8 @@ class Settings(BaseSettings):
     embedding_input_format: str = Field(default="retrieval-document-v1", min_length=1)
     embedding_submission_grace_seconds: PositiveInt = 900
     embedding_collection_interval_seconds: PositiveInt = 180
+    embedding_batch_tokens: int = Field(default=150_000, ge=32)
+    embedding_max_attempts: PositiveInt = 3
     gemini_answer_input_tokens: PositiveInt = 1_000_000
     gemini_answer_timeout_seconds: PositiveInt = 90
 
