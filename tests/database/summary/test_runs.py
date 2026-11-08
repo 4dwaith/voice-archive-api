@@ -9,7 +9,8 @@ from sqlalchemy import select
 
 from tests.summary_helpers import create_summary_drafts
 from voice_archive_api.db.models.content import BookSection, BookSegment
-from voice_archive_api.db.models.summary import SummaryGenerationRun
+from voice_archive_api.db.models.summary import SummaryBatchCheckpoint, SummaryGenerationRun
+from voice_archive_api.logic.summaries import SummaryBatchResult, SummaryTarget
 from voice_archive_api.services.summary import service as summaries
 
 
@@ -91,7 +92,7 @@ def test_new_invocation_replaces_four_hour_old_job_and_blocks_late_publication(c
         assert db.get(SummaryGenerationRun, replacement.run_id).state == "completed"
 
 
-@pytest.mark.parametrize("change", ["text", "policy", "model"])
+@pytest.mark.parametrize("change", ["text", "policy", "model", "effort"])
 def test_changed_inputs_or_generation_policy_allow_a_new_run(client, summary_book, change):
     book_id, _ = summary_book
     factory = client.app.state.session_factory
@@ -104,23 +105,32 @@ def test_changed_inputs_or_generation_policy_allow_a_new_run(client, summary_boo
         elif change == "policy":
             db.get(SummaryGenerationRun, original.run_id).policy = "old-policy"
 
-    replacement = summaries.start_summary_run(factory, book_id, "new-model" if change == "model" else "test-model")
+    replacement = summaries.start_summary_run(
+        factory,
+        book_id,
+        "new-model" if change == "model" else "test-model",
+        effort="high" if change == "effort" else "low",
+    )
 
     assert isinstance(replacement, summaries.SummaryGenerationInput)
     assert replacement.run_id != original.run_id
 
 
-def test_unchanged_root_skips_generation(client, summary_roots):
+@pytest.mark.parametrize("effort", ["low", "medium", "high"])
+def test_unchanged_root_skips_generation(client, summary_roots, effort):
     book_id, roots = summary_roots
     factory = client.app.state.session_factory
-    generation_input = summaries.start_summary_run(factory, book_id, "test", root_section_id=roots[0])
+    generation_input = summaries.start_summary_run(factory, book_id, "test", root_section_id=roots[0], effort=effort)
     version = summaries.publish_book_summaries(factory, generation_input, create_summary_drafts(generation_input))
 
-    result = summaries.start_summary_run(factory, book_id, "test", root_section_id=roots[0])
+    result = summaries.start_summary_run(factory, book_id, "test", root_section_id=roots[0], effort=effort)
 
     assert result == version
     with factory() as db:
         assert len(db.scalars(select(SummaryGenerationRun)).all()) == 1
+        assert db.get(SummaryGenerationRun, generation_input.run_id).policy == (
+            summaries.POLICY if effort == "low" else f"{summaries.POLICY};effort={effort}"
+        )
 
 
 @pytest.mark.parametrize("next_root_index", [None, 1], ids=["book", "another-root"])
@@ -195,3 +205,57 @@ def test_changed_earlier_root_summary_allows_regeneration(client, summary_roots)
     assert isinstance(result, summaries.SummaryGenerationInput)
     assert result.run_id != generation_input.run_id
     assert result.input_fingerprint != generation_input.input_fingerprint
+
+
+@pytest.mark.parametrize("change", ["unchanged", "source", "model", "policy", "effort", "scope", "override"])
+def test_checkpoint_reuse_requires_matching_run_inputs(client, summary_book, monkeypatch, change):
+    book_id, _ = summary_book
+    factory = client.app.state.session_factory
+    original = summaries.start_summary_run(factory, book_id, "test")
+    batch = SummaryBatchResult(summaries=create_summary_drafts(original))
+    fingerprint = "a" * 64
+    summaries.save_summary_batch_checkpoint(
+        factory, original.run_id, fingerprint, SummaryTarget(kind="book", id=book_id), 1, batch
+    )
+    summaries.fail_summary_run(factory, original.run_id)
+
+    if change == "source":
+        with factory.begin() as db:
+            db.scalar(select(BookSegment).where(BookSegment.book_id == book_id)).text_content = "Changed source"
+    if change == "policy":
+        monkeypatch.setattr(summaries, "POLICY", "changed-policy")
+    with factory() as db:
+        root_id = db.scalar(select(BookSection.id).where(BookSection.book_id == book_id))
+
+    replacement = summaries.start_summary_run(
+        factory,
+        book_id,
+        "new-model" if change == "model" else "test",
+        effort="high" if change == "effort" else "low",
+        root_section_id=root_id if change == "scope" else None,
+        allow_stale_downstream=change == "override",
+    )
+    checkpoints = summaries.read_summary_batch_checkpoints(factory, replacement.run_id)
+
+    assert checkpoints == ({fingerprint: batch} if change == "unchanged" else {})
+
+
+def test_clear_discards_checkpoints_and_rejects_late_batch_saves(client, summary_book):
+    book_id, _ = summary_book
+    factory = client.app.state.session_factory
+    generation_input = summaries.start_summary_run(factory, book_id, "test")
+    batch = SummaryBatchResult(summaries=create_summary_drafts(generation_input))
+    target = SummaryTarget(kind="book", id=book_id)
+    summaries.save_summary_batch_checkpoint(factory, generation_input.run_id, "a" * 64, target, 1, batch)
+
+    summaries.clear_book_summaries(factory, book_id)
+
+    with factory() as db:
+        assert db.scalar(select(SummaryBatchCheckpoint)) is None
+
+    with pytest.raises(ValueError, match="run changed"):
+        summaries.save_summary_batch_checkpoint(factory, generation_input.run_id, "b" * 64, target, 2, batch)
+
+    replacement = summaries.start_summary_run(factory, book_id, "test")
+
+    assert summaries.read_summary_batch_checkpoints(factory, replacement.run_id) == {}

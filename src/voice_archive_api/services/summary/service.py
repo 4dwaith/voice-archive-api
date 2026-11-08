@@ -9,8 +9,8 @@ from hashlib import sha256
 from uuid import UUID, uuid4
 
 import httpx
-from google.genai import errors
-from sqlalchemy import or_, select, true, update
+from google.genai import errors, types
+from sqlalchemy import delete, or_, select, true, update
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session, sessionmaker
 from sqlalchemy.sql.elements import ColumnElement
@@ -19,7 +19,7 @@ from starlette.concurrency import run_in_threadpool
 from voice_archive_api.core.config import Settings
 from voice_archive_api.db.models.book import Book
 from voice_archive_api.db.models.content import BookSection, BookSegment
-from voice_archive_api.db.models.summary import SummaryGenerationRun
+from voice_archive_api.db.models.summary import SummaryBatchCheckpoint, SummaryGenerationRun
 from voice_archive_api.logic.books.validation import resolve_primary_language
 from voice_archive_api.logic.summaries import (
     POLICY,
@@ -258,7 +258,14 @@ def start_summary_run(
     *,
     root_section_id: int | None = None,
     allow_stale_downstream: bool = False,
+    effort: str = "low",
 ) -> SummaryGenerationInput | UUID:
+    if effort not in {"low", "medium", "high"}:
+        raise ValueError("Use low, medium or high reasoning effort")
+
+    # Existing policies without an effort suffix represent low-effort generation.
+    policy = POLICY if effort == "low" else f"{POLICY};effort={effort}"
+
     with factory.begin() as db:
         book = lock_summary_book(db, book_id)
 
@@ -306,7 +313,7 @@ def start_summary_run(
             and completed.root_section_id == root_section_id
             and completed.input_fingerprint == generation_input.input_fingerprint
             and completed.model == model
-            and completed.policy == POLICY
+            and completed.policy == policy
         ):
             return book.content_version
         db.add(
@@ -318,12 +325,36 @@ def start_summary_run(
                 input_fingerprint=generation_input.input_fingerprint,
                 state="running",
                 model=model,
-                policy=POLICY,
+                policy=policy,
                 source_language=book.language,
                 started_at=now,
             )
         )
         return generation_input
+
+
+def record_summary_token_usage(
+    factory: sessionmaker[Session], run_id: UUID, usage: types.GenerateContentResponseUsageMetadata | None
+) -> None:
+    metadata = usage or types.GenerateContentResponseUsageMetadata()
+    is_missing = metadata.prompt_token_count is None or metadata.total_token_count is None
+    # Commit each response before validation/publication so failed attempts are retained.
+    # Do not filter by state: a late response still consumed tokens if the run was cleared.
+    with factory.begin() as db:
+        db.execute(
+            update(SummaryGenerationRun)
+            .where(SummaryGenerationRun.id == run_id)
+            .values(
+                input_tokens=SummaryGenerationRun.input_tokens + (metadata.prompt_token_count or 0),
+                cached_input_tokens=SummaryGenerationRun.cached_input_tokens
+                + (metadata.cached_content_token_count or 0),
+                output_tokens=SummaryGenerationRun.output_tokens + (metadata.candidates_token_count or 0),
+                thinking_tokens=SummaryGenerationRun.thinking_tokens + (metadata.thoughts_token_count or 0),
+                total_tokens=SummaryGenerationRun.total_tokens + (metadata.total_token_count or 0),
+                generation_response_count=SummaryGenerationRun.generation_response_count + 1,
+                missing_usage_response_count=SummaryGenerationRun.missing_usage_response_count + int(is_missing),
+            )
+        )
 
 
 def fail_summary_run(factory: sessionmaker[Session], run_id: UUID) -> None:
@@ -346,6 +377,59 @@ def ensure_summary_run_is_active(factory: sessionmaker[Session], run_id: UUID) -
     with factory() as db:
         if db.scalar(select(SummaryGenerationRun.state).where(SummaryGenerationRun.id == run_id)) != "running":
             raise ValueError("Summary run changed; stop generation")
+
+
+def read_summary_batch_checkpoints(factory: sessionmaker[Session], run_id: UUID) -> dict[str, SummaryBatchResult]:
+    with factory() as db:
+        run = db.get(SummaryGenerationRun, run_id)
+        if run is None or run.state != "running":
+            raise ValueError("Summary run changed; stop generation")
+
+        checkpoints = db.scalars(
+            select(SummaryBatchCheckpoint)
+            .join(SummaryGenerationRun)
+            .where(
+                SummaryGenerationRun.book_id == run.book_id,
+                SummaryGenerationRun.root_section_id == run.root_section_id,
+                SummaryGenerationRun.input_fingerprint == run.input_fingerprint,
+                SummaryGenerationRun.model == run.model,
+                SummaryGenerationRun.policy == run.policy,
+                SummaryGenerationRun.allow_stale_downstream == run.allow_stale_downstream,
+                or_(SummaryGenerationRun.id == run_id, SummaryGenerationRun.state == "failed"),
+            )
+            .order_by(SummaryGenerationRun.started_at.desc())
+        )
+        results: dict[str, SummaryBatchResult] = {}
+        for checkpoint in checkpoints:
+            if checkpoint.request_fingerprint not in results:
+                results[checkpoint.request_fingerprint] = SummaryBatchResult.model_validate(
+                    {"summaries": checkpoint.summaries}
+                )
+        return results
+
+
+def save_summary_batch_checkpoint(
+    factory: sessionmaker[Session],
+    run_id: UUID,
+    request_fingerprint: str,
+    source_target: SummaryTarget,
+    batch_index: int,
+    result: SummaryBatchResult,
+) -> None:
+    with factory.begin() as db:
+        run = db.get(SummaryGenerationRun, run_id, with_for_update=True)
+        if run is None or run.state != "running":
+            raise ValueError("Summary run changed; stop generation")
+        db.add(
+            SummaryBatchCheckpoint(
+                run_id=run_id,
+                request_fingerprint=request_fingerprint,
+                target_kind=source_target.kind,
+                target_id=source_target.id,
+                batch_index=batch_index,
+                summaries=[summary.model_dump() for summary in result.summaries],
+            )
+        )
 
 
 def publish_book_summaries(
@@ -415,6 +499,13 @@ def clear_book_summaries(factory: sessionmaker[Session], book_id: int) -> UUID |
                 failure_reason="Summaries cleared",
             )
         )
+        db.execute(
+            delete(SummaryBatchCheckpoint).where(
+                SummaryBatchCheckpoint.run_id.in_(
+                    select(SummaryGenerationRun.id).where(SummaryGenerationRun.book_id == book_id)
+                )
+            )
+        )
         book.summary = None
         if changed:
             book.content_version = uuid4()
@@ -428,6 +519,7 @@ async def generate_book_summaries(
     book_id: int,
     *,
     retries: int = 1,
+    effort: str = "low",
     root_section_id: int | None = None,
     allow_stale_downstream: bool = False,
     report_progress: Callable[[str], None] = lambda message: None,
@@ -441,6 +533,7 @@ async def generate_book_summaries(
         settings.gemini_text_model,
         root_section_id=root_section_id,
         allow_stale_downstream=allow_stale_downstream,
+        effort=effort,
     )
     if isinstance(prepared, UUID):
         report_progress("Generation skipped: a run is active or summaries already match the source and policy")
@@ -450,7 +543,9 @@ async def generate_book_summaries(
             report_progress(
                 "Allowing potentially stale downstream summaries: " + ", ".join(prepared.downstream_blockers)
             )
-        return await generate_and_publish_summaries(factory, settings, prepared, retries, report_progress)
+        return await generate_and_publish_summaries(
+            factory, settings, prepared, retries, report_progress, effort=effort
+        )
     except BaseException:
         await run_in_threadpool(fail_summary_run, factory, prepared.run_id)
         raise
@@ -462,13 +557,20 @@ async def generate_and_publish_summaries(
     generation_input: SummaryGenerationInput,
     retries: int,
     report_progress: Callable[[str], None],
+    *,
+    effort: str = "low",
 ) -> UUID:
     summary_inputs: list[RootSectionSummaryInput | BookSummaryInput] = [
         *build_root_section_summary_inputs(generation_input.source_fragments)
     ]
     if generation_input.root_section_id is None:
         summary_inputs.append(build_book_summary_input(generation_input.book_id, generation_input.source_fragments))
+    checkpoints = await run_in_threadpool(read_summary_batch_checkpoints, factory, generation_input.run_id)
     drafts: list[GeneratedSummary] = []
+
+    async def record_usage(usage: types.GenerateContentResponseUsageMetadata | None) -> None:
+        await run_in_threadpool(record_summary_token_usage, factory, generation_input.run_id, usage)
+
     earlier_root_summaries = list(generation_input.earlier_root_summaries)
     previous_root_text = generation_input.previous_root_text
     for index, summary_input in enumerate(summary_inputs, start=1):
@@ -490,18 +592,46 @@ async def generate_and_publish_summaries(
             summary_input.source_fragments,
             translate_passages=generation_input.is_passage_translation_required,
         )
+        batch_requests = []
+        for targets in batches:
+            target_text = json.dumps(
+                {
+                    "TARGETS": [
+                        {**target.model_dump(), "end_fragment_index": end_indexes[(target.kind, target.id)]}
+                        for target in targets
+                    ]
+                }
+            )
+            request_fingerprint = sha256(
+                json.dumps(
+                    [
+                        SUMMARY_INSTRUCTIONS,
+                        SummaryBatchResult.model_json_schema(),
+                        settings.gemini_text_model,
+                        effort,
+                        source,
+                        target_text,
+                    ]
+                ).encode()
+            ).hexdigest()
+            batch_requests.append((targets, target_text, request_fingerprint))
+        pending_batches = sum(fingerprint not in checkpoints for _, _, fingerprint in batch_requests)
         async with create_summary_context_cache(
-            settings, SUMMARY_INSTRUCTIONS, source, enabled=len(batches) > 1
+            settings, SUMMARY_INSTRUCTIONS, source, enabled=pending_batches > 1
         ) as cache:
-            for batch_index, targets in enumerate(batches, start=1):
-                target_text = json.dumps(
-                    {
-                        "TARGETS": [
-                            {**target.model_dump(), "end_fragment_index": end_indexes[(target.kind, target.id)]}
-                            for target in targets
-                        ]
-                    }
-                )
+            for batch_index, (targets, target_text, request_fingerprint) in enumerate(batch_requests, start=1):
+                if saved_result := checkpoints.get(request_fingerprint):
+                    await run_in_threadpool(ensure_summary_run_is_active, factory, generation_input.run_id)
+                    validate_summary_coverage(targets, saved_result.summaries)
+                    validate_summary_translations(
+                        saved_result.summaries, translate_passages=generation_input.is_passage_translation_required
+                    )
+                    report_progress(
+                        f"{index}/{len(summary_inputs)} {summary_input.source_target.kind} {summary_input.source_target.id}, "
+                        f"batch {batch_index}/{len(batches)} reused checkpoint"
+                    )
+                    drafts.extend(saved_result.summaries)
+                    continue
                 for attempt in range(retries + 1):
                     await run_in_threadpool(ensure_summary_run_is_active, factory, generation_input.run_id)
                     report_progress(
@@ -515,13 +645,24 @@ async def generate_and_publish_summaries(
                             SUMMARY_INSTRUCTIONS,
                             [target_text] if provider_cache_name else [source, target_text],
                             SummaryBatchResult,
+                            effort=effort,
                             api_key=settings.effective_gemini_batch_api_key,
                             max_output_tokens=None,
                             cached_content=provider_cache_name,
+                            report_usage=record_usage,
                         )
                         validate_summary_coverage(targets, result.summaries)
                         validate_summary_translations(
                             result.summaries, translate_passages=generation_input.is_passage_translation_required
+                        )
+                        await run_in_threadpool(
+                            save_summary_batch_checkpoint,
+                            factory,
+                            generation_input.run_id,
+                            request_fingerprint,
+                            summary_input.source_target,
+                            batch_index,
+                            result,
                         )
                         drafts.extend(result.summaries)
                         break

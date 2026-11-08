@@ -12,6 +12,8 @@ from voice_archive_api.cli import summaries
         ["generate", "--root-section-id", "9223372036854775808"],
         ["clear", "--root-section-id", "1"],
         ["clear", "--allow-stale-downstream"],
+        ["clear", "--effort", "high"],
+        ["generate", "--effort", "invalid"],
     ],
 )
 def test_rejects_invalid_scope_arguments(arguments):

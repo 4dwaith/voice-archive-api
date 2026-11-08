@@ -233,10 +233,15 @@ def test_allows_original_names_in_english_prose(summary):
     assert result.summary == summary
 
 
-@pytest.mark.parametrize("ids", [[], [7, 7], [8]])
-def test_rejects_missing_duplicate_and_unknown_targets(ids):
+@pytest.mark.parametrize(
+    "ids,details",
+    [([], "Missing: [('book', 7)]"), ([7, 7], "duplicates: [('book', 7)]"), ([8], "unexpected: [('book', 8)]")],
+)
+def test_rejects_missing_duplicate_and_unknown_targets(ids, details):
     target = SummaryTarget(kind="book", id=7)
     drafts = [GeneratedSummary(kind="book", id=value, summary="A source-grounded summary.") for value in ids]
 
-    with pytest.raises(ValueError, match="exactly once"):
+    with pytest.raises(ValueError, match="exactly once") as error:
         validate_summary_coverage([target], drafts)
+
+    assert details in str(error.value)

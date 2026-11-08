@@ -6,14 +6,14 @@ from datetime import UTC, datetime, timedelta
 
 import httpx
 import pytest
-from google.genai import Client
+from google.genai import Client, types
 from pydantic import SecretStr
 from sqlalchemy import select
 
 from tests.summary_helpers import create_summary_drafts
 from voice_archive_api.db.models.book import Book
 from voice_archive_api.db.models.content import BookSegment
-from voice_archive_api.db.models.summary import SummaryGenerationRun
+from voice_archive_api.db.models.summary import SummaryBatchCheckpoint, SummaryGenerationRun
 from voice_archive_api.logic.summaries import POLICY, SUMMARY_INSTRUCTIONS, GeneratedSummary
 from voice_archive_api.services.books.schemas import BookPatch
 from voice_archive_api.services.books.service import patch_book
@@ -22,14 +22,16 @@ from voice_archive_api.services.summary import service as summaries
 
 
 @pytest.mark.parametrize("cached_request_fails", [False, True])
+@pytest.mark.parametrize("effort", ["low", "high"])
 def test_batched_roots_keep_full_context_and_carry_earlier_summaries(
-    client, summary_series, monkeypatch, cached_request_fails
+    client, summary_series, monkeypatch, cached_request_fails, effort
 ):
     _, _, current_id = summary_series
     requests = []
     cache_events = []
     cached_source = None
     generation_attempts = 0
+    reported_usage = []
     client.app.state.settings.gemini_batch_api_key = SecretStr("provider-batch-secret")
     client.app.state.settings.gemini_api_key = SecretStr("provider-interactive-secret")
 
@@ -39,6 +41,8 @@ def test_batched_roots_keep_full_context_and_carry_earlier_summaries(
         if request.url.path.endswith(":countTokens"):
             if "generateContentRequest" in payload:
                 counted = payload["generateContentRequest"]
+                config = types.GenerateContentConfig.model_validate(counted["generationConfig"])
+                assert config.thinking_config.thinking_level == types.ThinkingLevel(effort.upper())
                 if counted.get("cachedContent"):
                     assert counted["cachedContent"] == "cachedContents/root"
                     assert "systemInstruction" not in counted
@@ -60,6 +64,8 @@ def test_batched_roots_keep_full_context_and_carry_earlier_summaries(
             )
         if not request.url.path.endswith(":generateContent"):
             return httpx.Response(200, json={"inputTokenLimit": 1_048_576, "outputTokenLimit": 65_536})
+        config = types.GenerateContentConfig.model_validate(payload["generationConfig"])
+        assert config.thinking_config.thinking_level == types.ThinkingLevel(effort.upper())
         generation_attempts += 1
         if cached_request_fails and generation_attempts == 1:
             return httpx.Response(404, json={"error": {"code": 404, "message": "Cache unavailable"}})
@@ -77,8 +83,20 @@ def test_batched_roots_keep_full_context_and_carry_earlier_summaries(
                 for target in json.loads(parts[1])["TARGETS"]
             ]
         }
+        usage = {
+            "promptTokenCount": 8000,
+            "cachedContentTokenCount": 7000 if payload.get("cachedContent") else 0,
+            "candidatesTokenCount": 100,
+            "thoughtsTokenCount": 50,
+            "totalTokenCount": 8150,
+        }
+        reported_usage.append(usage)
         return httpx.Response(
-            200, json={"candidates": [{"finishReason": "STOP", "content": {"parts": [{"text": json.dumps(result)}]}}]}
+            200,
+            json={
+                "candidates": [{"finishReason": "STOP", "content": {"parts": [{"text": json.dumps(result)}]}}],
+                "usageMetadata": usage,
+            },
         )
 
     def create_test_client(*, api_key, http_options):
@@ -90,7 +108,9 @@ def test_batched_roots_keep_full_context_and_carry_earlier_summaries(
     monkeypatch.setattr("voice_archive_api.services.summary.cache.genai.Client", create_test_client)
 
     asyncio.run(
-        summaries.generate_book_summaries(client.app.state.session_factory, client.app.state.settings, current_id)
+        summaries.generate_book_summaries(
+            client.app.state.session_factory, client.app.state.settings, current_id, effort=effort
+        )
     )
 
     assert len(requests) == 4
@@ -125,6 +145,11 @@ def test_batched_roots_keep_full_context_and_carry_earlier_summaries(
             row.english_translation is None
             for row in db.scalars(select(BookSegment).where(BookSegment.book_id == current_id))
         )
+        run = db.scalar(select(SummaryGenerationRun).where(SummaryGenerationRun.book_id == current_id))
+        assert run.input_tokens == 32000
+        assert run.cached_input_tokens == sum(usage["cachedContentTokenCount"] for usage in reported_usage)
+        assert (run.output_tokens, run.thinking_tokens, run.total_tokens) == (400, 200, 32600)
+        assert (run.generation_response_count, run.missing_usage_response_count) == (4, 0)
 
 
 @pytest.mark.parametrize("problem", ["invalid", "oversize", "timeout"])
@@ -254,6 +279,72 @@ def test_summary_generation_succeeds_with_only_batch_key(client, summary_book, m
         assert db.get(Book, book_id).summary == "A traveller returns home."
 
 
+def test_records_rejected_response_usage_before_successful_retry(client, summary_roots, monkeypatch):
+    book_id, roots = summary_roots
+    factory = client.app.state.session_factory
+    client.app.state.settings.gemini_batch_api_key = SecretStr("test-key")
+    responses = 0
+
+    def respond(request):
+        nonlocal responses
+        if request.url.path.endswith(":countTokens"):
+            return httpx.Response(200, json={"totalTokens": 100})
+        if not request.url.path.endswith(":generateContent"):
+            return httpx.Response(200, json={"inputTokenLimit": 10000, "outputTokenLimit": 10000})
+        responses += 1
+        payload = json.loads(request.content)
+        targets = json.loads(payload["contents"][0]["parts"][1]["text"])["TARGETS"]
+        output = {
+            "summaries": [
+                {
+                    "kind": target["kind"],
+                    "id": target["id"],
+                    "summary": "The traveller returns home.",
+                    "english_translation": "First." if target["kind"] == "segment" else None,
+                }
+                for target in targets
+            ]
+        }
+        response_text = "invalid JSON" if responses == 1 else json.dumps(output)
+        return httpx.Response(
+            200,
+            json={
+                "candidates": [{"finishReason": "STOP", "content": {"parts": [{"text": response_text}]}}],
+                "usageMetadata": {
+                    "promptTokenCount": 100,
+                    "candidatesTokenCount": 20,
+                    "thoughtsTokenCount": 50,
+                    "totalTokenCount": 170,
+                },
+            },
+        )
+
+    def create_test_client(*, api_key, http_options):
+        http_options.async_client_args = {"transport": httpx.MockTransport(respond)}
+        return Client(api_key=api_key, http_options=http_options)
+
+    monkeypatch.setattr("voice_archive_api.services.library.provider.genai.Client", create_test_client)
+
+    asyncio.run(
+        summaries.generate_book_summaries(
+            factory, client.app.state.settings, book_id, root_section_id=roots[0], retries=1, effort="high"
+        )
+    )
+
+    assert responses == 2
+    with factory() as db:
+        run = db.scalar(select(SummaryGenerationRun))
+
+        assert run.state == "completed"
+        assert run.input_tokens == 200
+        assert run.cached_input_tokens == 0
+        assert run.output_tokens == 40
+        assert run.thinking_tokens == 100
+        assert run.total_tokens == 340
+        assert run.generation_response_count == 2
+        assert run.missing_usage_response_count == 0
+
+
 def test_summary_generation_fails_when_both_keys_are_missing(client, summary_book):
     book_id, _ = summary_book
     factory = client.app.state.session_factory
@@ -262,3 +353,142 @@ def test_summary_generation_fails_when_both_keys_are_missing(client, summary_boo
 
     with pytest.raises(ValueError, match="generation failed"):
         asyncio.run(summaries.generate_book_summaries(factory, client.app.state.settings, book_id))
+
+
+def test_resumes_validated_batches_without_rebilling_them(client, summary_series, monkeypatch):
+    _, _, book_id = summary_series
+    factory = client.app.state.session_factory
+    requests = []
+    should_fail = True
+    usage = types.GenerateContentResponseUsageMetadata(
+        prompt_token_count=100, candidates_token_count=20, thoughts_token_count=10, total_token_count=130
+    )
+
+    async def generate_output(settings, instruction, parts, output_type, **options):
+        targets = json.loads(parts[-1])["TARGETS"]
+        requests.append(targets)
+        await options["report_usage"](usage)
+        if should_fail and len(requests) == 2:
+            return output_type(summaries=[])
+        return output_type(
+            summaries=[
+                {"kind": target["kind"], "id": target["id"], "summary": "A traveller returns home."}
+                for target in targets
+            ]
+        )
+
+    monkeypatch.setattr(summaries, "generate_structured_output", generate_output)
+    with factory() as db:
+        original_version = db.get(Book, book_id).content_version
+
+    with pytest.raises(ValueError, match="generation failed"):
+        asyncio.run(summaries.generate_book_summaries(factory, client.app.state.settings, book_id, retries=0))
+
+    with factory() as db:
+        failed_run = db.scalar(select(SummaryGenerationRun).where(SummaryGenerationRun.book_id == book_id))
+
+        assert failed_run.state == "failed"
+        assert failed_run.generation_response_count == 2
+        assert failed_run.total_tokens == 260
+        assert (
+            len(db.scalars(select(SummaryBatchCheckpoint).where(SummaryBatchCheckpoint.run_id == failed_run.id)).all())
+            == 1
+        )
+        assert db.get(Book, book_id).content_version == original_version
+        assert all(row.summary is None for row in db.scalars(select(BookSegment).where(BookSegment.book_id == book_id)))
+
+    failed_targets = requests[-1]
+    requests.clear()
+
+    with pytest.raises(ValueError, match="generation failed"):
+        asyncio.run(summaries.generate_book_summaries(factory, client.app.state.settings, book_id, retries=0))
+
+    assert requests[0] == failed_targets
+    with factory() as db:
+        second_failed_run = db.scalar(
+            select(SummaryGenerationRun).where(
+                SummaryGenerationRun.book_id == book_id, SummaryGenerationRun.id != failed_run.id
+            )
+        )
+
+        assert second_failed_run.state == "failed"
+        assert second_failed_run.generation_response_count == 2
+        assert second_failed_run.total_tokens == 260
+        assert db.get(Book, book_id).content_version == original_version
+
+    failed_targets = requests[-1]
+    requests.clear()
+    should_fail = False
+    progress = []
+
+    new_version = asyncio.run(
+        summaries.generate_book_summaries(
+            factory, client.app.state.settings, book_id, retries=0, report_progress=progress.append
+        )
+    )
+
+    assert new_version != original_version
+    assert len(requests) == 2
+    assert requests[0] == failed_targets
+    assert sum("reused checkpoint" in message for message in progress) == 2
+    with factory() as db:
+        completed_run = db.scalar(
+            select(SummaryGenerationRun).where(
+                SummaryGenerationRun.book_id == book_id, SummaryGenerationRun.state == "completed"
+            )
+        )
+
+        assert completed_run.id != failed_run.id
+        assert completed_run.generation_response_count == 2
+        assert completed_run.total_tokens == 260
+        assert db.get(SummaryGenerationRun, failed_run.id).total_tokens == 260
+        assert db.get(SummaryGenerationRun, second_failed_run.id).total_tokens == 260
+        assert all(row.summary for row in db.scalars(select(BookSegment).where(BookSegment.book_id == book_id)))
+
+
+@pytest.mark.parametrize("change_prompt", [False, True])
+def test_publication_failure_resumes_only_identical_requests(client, summary_book, monkeypatch, change_prompt):
+    book_id, original_version = summary_book
+    factory = client.app.state.session_factory
+    calls = 0
+    publish = summaries.publish_book_summaries
+
+    async def generate_output(settings, instruction, parts, output_type, **options):
+        nonlocal calls
+        calls += 1
+        return output_type(
+            summaries=[
+                {
+                    "kind": target["kind"],
+                    "id": target["id"],
+                    "summary": "A traveller returns home.",
+                    "english_translation": "He came home to see his mother." if target["kind"] == "segment" else None,
+                }
+                for target in json.loads(parts[-1])["TARGETS"]
+            ]
+        )
+
+    def fail_publication(*args):
+        raise RuntimeError("Publication interrupted")
+
+    monkeypatch.setattr(summaries, "generate_structured_output", generate_output)
+    monkeypatch.setattr(summaries, "publish_book_summaries", fail_publication)
+
+    with pytest.raises(RuntimeError, match="Publication interrupted"):
+        asyncio.run(summaries.generate_book_summaries(factory, client.app.state.settings, book_id))
+
+    assert calls == 2
+    with factory() as db:
+        assert db.get(Book, book_id).content_version == original_version
+        assert db.get(Book, book_id).summary is None
+
+    monkeypatch.setattr(summaries, "publish_book_summaries", publish)
+    if change_prompt:
+        monkeypatch.setattr(summaries, "SUMMARY_INSTRUCTIONS", SUMMARY_INSTRUCTIONS + " Preserve source phrasing.")
+
+    new_version = asyncio.run(summaries.generate_book_summaries(factory, client.app.state.settings, book_id))
+
+    assert calls == (4 if change_prompt else 2)
+    assert new_version != original_version
+    with factory() as db:
+        assert db.get(Book, book_id).summary == "A traveller returns home."

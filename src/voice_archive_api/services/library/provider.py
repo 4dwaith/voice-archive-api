@@ -2,6 +2,7 @@
 
 import asyncio
 import logging
+from collections.abc import Awaitable, Callable
 
 from google import genai
 from google.genai import types
@@ -39,6 +40,7 @@ async def generate_structured_output[Output: BaseModel](
     api_key: SecretStr | None = None,
     max_output_tokens: int | None = 8192,
     cached_content: str | None = None,
+    report_usage: Callable[[types.GenerateContentResponseUsageMetadata | None], Awaitable[None]] | None = None,
 ) -> Output:
     target_key = api_key or settings.gemini_api_key
     if not target_key or not target_key.get_secret_value():
@@ -108,6 +110,8 @@ async def generate_structured_output[Output: BaseModel](
                 if total > min(input_limit, settings.gemini_answer_input_tokens):
                     raise BookTooLargeError
                 generated = await async_client.models.generate_content(model=model, contents=contents, config=config)
+                if report_usage is not None:
+                    await report_usage(generated.usage_metadata)
                 logger.debug(
                     "Complete model response: model=%s output_type=%s response=%s",
                     model,

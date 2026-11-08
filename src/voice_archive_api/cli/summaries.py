@@ -25,6 +25,9 @@ def run(argv: list[str] | None = None) -> int:
     )
     parser.add_argument("--retries", type=int, choices=range(3), default=1)
     parser.add_argument(
+        "--effort", choices=["low", "medium", "high"], help="Reasoning effort for generation (default: low)"
+    )
+    parser.add_argument(
         "--log-level",
         choices=["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"],
         default="INFO",
@@ -37,8 +40,10 @@ def run(argv: list[str] | None = None) -> int:
         parser.error("Use a positive book ID within the PostgreSQL BIGINT range")
     if args.root_section_id is not None and not 0 < args.root_section_id <= 9_223_372_036_854_775_807:
         parser.error("Use a positive root section ID within the PostgreSQL BIGINT range")
-    if args.operation == "clear" and (args.root_section_id is not None or args.allow_stale_downstream):
-        parser.error("--root-section-id and --allow-stale-downstream apply only to generate")
+    if args.operation == "clear" and (
+        args.root_section_id is not None or args.allow_stale_downstream or args.effort is not None
+    ):
+        parser.error("--root-section-id, --allow-stale-downstream and --effort apply only to generate")
     try:
         try:
             settings = Settings()
@@ -57,6 +62,7 @@ def run(argv: list[str] | None = None) -> int:
                         settings,
                         args.book_id,
                         retries=args.retries,
+                        effort=args.effort or "low",
                         root_section_id=args.root_section_id,
                         allow_stale_downstream=args.allow_stale_downstream,
                         report_progress=lambda message: print(message, file=sys.stderr),

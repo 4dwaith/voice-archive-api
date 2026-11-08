@@ -324,6 +324,7 @@ book summaries directly through the CLI (no API server is required):
 uv run --env-file .env summarize-book generate --book-id 34
 uv run --env-file .env summarize-book generate --book-id 34 --root-section-id 120
 uv run --env-file .env summarize-book generate --book-id 34 --root-section-id 120 --log-level DEBUG
+uv run --env-file .env summarize-book generate --book-id 34 --root-section-id 120 --effort high
 uv run --env-file .env summarize-book clear --book-id 34
 ```
 
@@ -376,8 +377,8 @@ English-source passages and all book/section targets return no translation.
 Translations preserve detail, order, names, attribution and uncertainty; contextual
 clarification belongs in the separate summary. This internal field is stored for
 later retrieval preparation; current public content/Live response shapes are unchanged.
-Output checks enforce the English language declaration, target coverage, nonempty
-text, absence of NULs and the summary length limit. They do not guess language
+Output checks enforce target coverage, required translations, nonempty text,
+absence of NULs and the summary length limit. They do not guess language
 from script proportions or certify translation fidelity. Faithfulness and English
 prose remain prompt requirements, with representative human quality review when
 real provider checks are approved; no second-model judge is called automatically.
@@ -395,6 +396,10 @@ Section cutoffs include their entire subtree. Targets are requested in cutoff
 order, with passages before enclosing summaries at the same cutoff. This remains
 a prompt rule: full-root batching exposes later text, so semantic isolation cannot
 be guaranteed by the cutoff metadata or structural output validation.
+`--effort low|medium|high` selects reasoning effort and defaults to `low`.
+Medium and high effort are recorded in the run's policy identifier, so changing
+effort permits regeneration rather than skipping an existing result. Existing
+policies without an effort suffix represent low effort.
 `--retries 0..2` defaults to one retry per batch;
 oversize context is not retried. Database writes are never retried automatically.
 Exit 1 means invalid input, unavailable source/provider or stale work; exit 3 means
@@ -404,19 +409,35 @@ Summary requests use the model's reported full output ceiling independently of t
 working batch target. Whole-book answers retain their existing response cap.
 
 Multi-request roots share an explicit provider cache when their context meets the
-configured model's 4,096-token caching minimum. Single-request scopes skip cache
-preparation. Caches start with a 20-minute TTL, renew before another request would
+configured model's 4,096-token caching minimum. Scopes with fewer than two
+unfinished batches skip cache preparation. Caches start with a 20-minute TTL, renew before another request would
 approach expiry, and are explicitly deleted when that scope finishes or fails.
 An unusually long configured request timeout can require a longer renewal.
 Cache preparation/renewal failures use full canonical context directly; generation
 retries also stop using the cache. Failed cleanup leaves the TTL as a fallback.
 This uses ordinary generation requests, not the asynchronous Batch API.
 
-Results stay in memory until the complete selected scope, including every required passage
-translation, passes validation. Publication stores summaries and translations
+Migration `0021_summary_checkpoints` adds `book_summary_batch_checkpoints`.
+After a batch passes all output validation, its summaries and translations are
+committed as a checkpoint before proceeding. A new invocation automatically
+reuses checkpoints from compatible failed runs, including expired runs recovered
+by admission, while generating only unfinished batches. Compatibility requires
+matching source/background fingerprints, selected scope, downstream override,
+model and effort policy; each reused request must also match the exact prompt,
+output schema, context and targets. Restored batches are validated again and
+reported as `reused checkpoint`. Fully restored scopes make no provider calls.
+Each invocation has a new run ID and records only its own provider token usage;
+previous invocations retain their original measurements. Checkpoints remain
+associated with the run that generated them. The clear job deletes all of a
+book's checkpoints as well as its published output, providing a fresh start.
+
+Publication waits until the complete selected scope, including every required passage
+translation, passes validation. It stores summaries and translations
 atomically and changes the book content version once; a clear removes both and
-changes the version when either was present. Policy `reader-context-english-v6`
-makes earlier runs eligible for regeneration under the resolved-language policy. The nullable field
+changes the version when either was present. Policy `reader-context-english-v7`
+requires summaries to preserve attribution, uncertainty and source specificity,
+and translations to preserve source errors and reference values without silent
+corrections. Earlier runs are eligible for regeneration under this policy. The nullable field
 requires migration `0017_passage_translations`; scoped runs require
 `0018_summary_scopes`. `book_summary_runs` records the selected root (null for a
 whole book), the downstream override, source fingerprints, running/completed/
@@ -424,6 +445,32 @@ failed state, timestamps and model/policy/source-language provenance. Before any
 provider work, generation exits successfully if a job is already running or the
 accepted summaries match the current source, background, model and policy. Clearing
 summaries permits regeneration even when source text is unchanged.
+
+Migration `0019_summary_token_usage` adds per-run generation token totals:
+`input_tokens` (including cached input), `cached_input_tokens` (a subset of input),
+`output_tokens` (generated text), `thinking_tokens`, and the provider-reported
+`total_tokens`. Each response is recorded in its own transaction before finish
+reason, JSON, coverage or translation validation, so rejected responses and
+retries remain counted even when generation fails or publication rolls back.
+`generation_response_count` counts returned generation responses;
+`missing_usage_response_count` flags responses with missing usage or missing
+input/total counts. Missing optional cached/output/thinking counts contribute zero.
+Totals with missing usage are partial. Requests that time out or fail without a
+response cannot be measured here. Preflight token estimates and cache creation
+or storage charges are not included. Migration `0020_required_summary_usage`
+backfills historical NULL values to zero and makes all usage fields mandatory
+with zero defaults. A historical zero means no recorded usage.
+
+For example, inspect recent measurements with:
+
+```sql
+SELECT root_section_id, state, policy,
+       input_tokens, cached_input_tokens, output_tokens, thinking_tokens, total_tokens,
+       generation_response_count, missing_usage_response_count
+FROM book_summary_runs
+WHERE book_id = 34
+ORDER BY started_at DESC;
+```
 
 A new invocation marks running jobs at least four hours old failed and can start
 a replacement. Recovery runs only on invocation, using short SQLAlchemy transactions
