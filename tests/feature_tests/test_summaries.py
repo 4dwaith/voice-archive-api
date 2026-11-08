@@ -14,7 +14,11 @@ from voice_archive_api.cli import summaries as cli
 from voice_archive_api.db.models.book import Book
 from voice_archive_api.db.models.content import BookSection, BookSegment
 from voice_archive_api.db.models.summary import SummaryGenerationRun
-from voice_archive_api.logic.summaries import SUMMARY_INSTRUCTIONS, GeneratedSummary
+from voice_archive_api.logic.summaries import (
+    SUMMARY_INSTRUCTIONS,
+    TRANSLATION_INSTRUCTIONS,
+    GeneratedSummaryWithTranslation,
+)
 
 scenarios("../features/summary")
 
@@ -110,13 +114,19 @@ def mock_summary_provider(client, summary_case, monkeypatch):
             assert book.content_version == summary_case["version"]
             assert book.summary == summary_case["accepted"]
         summary_case["requests"].append(json.loads(parts[0]))
-        assert payload["systemInstruction"]["parts"][0]["text"] == SUMMARY_INSTRUCTIONS
+        expected_instructions = SUMMARY_INSTRUCTIONS
+        if summary_case["translate_passages"]:
+            expected_instructions += TRANSLATION_INSTRUCTIONS
+        assert payload["systemInstruction"]["parts"][0]["text"] == expected_instructions
+        assert ("english_translation" in json.dumps(payload["generationConfig"]["responseJsonSchema"])) == summary_case[
+            "translate_passages"
+        ]
         assert "summary" not in json.loads(parts[0])["SOURCE"]
         if summary_case["reject"]:
             return httpx.Response(403, json={"error": {"message": "provider-batch-secret"}})
         result = {
             "summaries": [
-                GeneratedSummary(
+                GeneratedSummaryWithTranslation(
                     kind=target["kind"],
                     id=target["id"],
                     summary="He returned home to see his mother.",
@@ -127,7 +137,7 @@ def mock_summary_provider(client, summary_case, monkeypatch):
                         and not summary_case["omit_translation"]
                         else None
                     ),
-                ).model_dump()
+                ).model_dump(exclude_none=not summary_case["translate_passages"])
                 for target in json.loads(parts[1])["TARGETS"]
             ]
         }

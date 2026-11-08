@@ -6,7 +6,7 @@ import pytest
 from sqlalchemy import select
 
 from voice_archive_api.db.models.content import BookSection
-from voice_archive_api.logic.summaries import GeneratedSummary
+from voice_archive_api.logic.summaries import GeneratedSummaryWithTranslation
 from voice_archive_api.services.content.service import purge
 from voice_archive_api.services.series import service as series
 from voice_archive_api.services.series.schemas import SeriesCreate
@@ -37,7 +37,7 @@ def create_summary_book(client):
 
 def create_summary_drafts(generation_input):
     return [
-        GeneratedSummary(
+        GeneratedSummaryWithTranslation(
             **target.model_dump(),
             summary=f"The {target.kind} describes a return home.",
             english_translation=(

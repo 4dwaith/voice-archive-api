@@ -5,7 +5,7 @@ import pytest
 from voice_archive_api.logic.summaries import (
     BookContentFragment,
     BookSummary,
-    GeneratedSummary,
+    GeneratedSummaryWithTranslation,
     SectionSummary,
     SummaryTarget,
     build_book_summary_input,
@@ -117,7 +117,7 @@ def test_root_and_book_inputs_cover_every_target_and_keep_background_separate():
     }
 
 
-@pytest.mark.parametrize("text,first_size,maximum_size", [("x" * 1200, 36, 37), ("Yes", 90, 93)])
+@pytest.mark.parametrize("text,first_size,maximum_size", [("x" * 1200, 74, 75), ("Yes", 101, 101)])
 def test_batches_targets_for_a_conservative_response_size(text, first_size, maximum_size):
     targets = [SummaryTarget(kind="section", id=10), *(SummaryTarget(kind="segment", id=index) for index in range(100))]
     passages = [BookContentFragment(id=index, parent_id=10, kind="passage", text=text) for index in range(100)]
@@ -136,7 +136,7 @@ def test_translation_output_allowance_grows_with_the_full_passage():
     translated_batches = split_summary_targets(targets, passages, translate_passages=True)
     english_batches = split_summary_targets(targets, passages, translate_passages=False)
 
-    assert translated_batches == [[target] for target in targets]
+    assert translated_batches == [targets[:2], targets[2:]]
     assert english_batches == [targets]
 
 
@@ -150,7 +150,9 @@ def test_translation_output_allowance_grows_with_the_full_passage():
     ],
 )
 def test_accepts_translation_only_for_non_english_passages(translate_passages, kind, translation):
-    draft = GeneratedSummary(kind=kind, id=1, summary="A concise summary.", english_translation=translation)
+    draft = GeneratedSummaryWithTranslation(
+        kind=kind, id=1, summary="A concise summary.", english_translation=translation
+    )
 
     validate_summary_translations([draft], translate_passages=translate_passages)
 
@@ -165,7 +167,9 @@ def test_accepts_translation_only_for_non_english_passages(translate_passages, k
     ],
 )
 def test_rejects_missing_or_unrequested_translations(translate_passages, kind, translation):
-    draft = GeneratedSummary(kind=kind, id=1, summary="A concise summary.", english_translation=translation)
+    draft = GeneratedSummaryWithTranslation(
+        kind=kind, id=1, summary="A concise summary.", english_translation=translation
+    )
 
     with pytest.raises(ValueError, match="translations"):
         validate_summary_translations([draft], translate_passages=translate_passages)
@@ -174,12 +178,16 @@ def test_rejects_missing_or_unrequested_translations(translate_passages, kind, t
 @pytest.mark.parametrize("translation", ["  ", "Text\x00"])
 def test_rejects_unusable_translation_text(translation):
     with pytest.raises(ValueError, match="translation"):
-        GeneratedSummary(kind="segment", id=1, summary="A concise summary.", english_translation=translation)
+        GeneratedSummaryWithTranslation(
+            kind="segment", id=1, summary="A concise summary.", english_translation=translation
+        )
 
 
 @pytest.mark.parametrize("translation", ["A complete translated passage. " * 400, "123 —"])
 def test_translation_preserves_full_passage_text(translation):
-    draft = GeneratedSummary(kind="segment", id=1, summary="A concise summary.", english_translation=translation)
+    draft = GeneratedSummaryWithTranslation(
+        kind="segment", id=1, summary="A concise summary.", english_translation=translation
+    )
 
     assert draft.english_translation == translation.strip()
     validate_summary_translations([draft], translate_passages=True)
@@ -216,11 +224,11 @@ def test_target_cutoffs_follow_subtrees_and_passage_positions_with_overlapping_i
 @pytest.mark.parametrize("summary", ["  ", "Text\x00", "x" * 8001])
 def test_rejects_unusable_summary_text(summary):
     with pytest.raises(ValueError):
-        GeneratedSummary(kind="book", id=7, summary=summary)
+        GeneratedSummaryWithTranslation(kind="book", id=7, summary=summary)
 
 
 def test_model_output_schema_does_not_request_language():
-    schema = GeneratedSummary.model_json_schema()
+    schema = GeneratedSummaryWithTranslation.model_json_schema()
 
     assert "language" not in schema["properties"]
     assert "language" not in schema["required"]
@@ -228,7 +236,7 @@ def test_model_output_schema_does_not_request_language():
 
 @pytest.mark.parametrize("summary", ["The narrator describes ಕೃಷ್ಣ with uncertainty.", "ಕೃಷ್ಣ met ಅರ್ಜುನ."])
 def test_allows_original_names_in_english_prose(summary):
-    result = GeneratedSummary(kind="book", id=7, summary=f"  {summary}  ")
+    result = GeneratedSummaryWithTranslation(kind="book", id=7, summary=f"  {summary}  ")
 
     assert result.summary == summary
 
@@ -239,7 +247,9 @@ def test_allows_original_names_in_english_prose(summary):
 )
 def test_rejects_missing_duplicate_and_unknown_targets(ids, details):
     target = SummaryTarget(kind="book", id=7)
-    drafts = [GeneratedSummary(kind="book", id=value, summary="A source-grounded summary.") for value in ids]
+    drafts = [
+        GeneratedSummaryWithTranslation(kind="book", id=value, summary="A source-grounded summary.") for value in ids
+    ]
 
     with pytest.raises(ValueError, match="exactly once") as error:
         validate_summary_coverage([target], drafts)

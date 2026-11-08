@@ -14,7 +14,7 @@ from tests.summary_helpers import create_summary_drafts
 from voice_archive_api.db.models.book import Book
 from voice_archive_api.db.models.content import BookSegment
 from voice_archive_api.db.models.summary import SummaryBatchCheckpoint, SummaryGenerationRun
-from voice_archive_api.logic.summaries import POLICY, SUMMARY_INSTRUCTIONS, GeneratedSummary
+from voice_archive_api.logic.summaries import POLICY, SUMMARY_INSTRUCTIONS, GeneratedSummaryWithTranslation
 from voice_archive_api.services.books.schemas import BookPatch
 from voice_archive_api.services.books.service import patch_book
 from voice_archive_api.services.library.provider import BookTooLargeError
@@ -66,6 +66,9 @@ def test_batched_roots_keep_full_context_and_carry_earlier_summaries(
             return httpx.Response(200, json={"inputTokenLimit": 1_048_576, "outputTokenLimit": 65_536})
         config = types.GenerateContentConfig.model_validate(payload["generationConfig"])
         assert config.thinking_config.thinking_level == types.ThinkingLevel(effort.upper())
+        assert "english_translation" not in json.dumps(payload["generationConfig"]["responseJsonSchema"])
+        if not payload.get("cachedContent"):
+            assert payload["systemInstruction"]["parts"][0]["text"] == SUMMARY_INSTRUCTIONS
         generation_attempts += 1
         if cached_request_fails and generation_attempts == 1:
             return httpx.Response(404, json={"error": {"code": 404, "message": "Cache unavailable"}})
@@ -77,9 +80,9 @@ def test_batched_roots_keep_full_context_and_carry_earlier_summaries(
         requests.append(parts)
         result = {
             "summaries": [
-                GeneratedSummary(
+                GeneratedSummaryWithTranslation(
                     kind=target["kind"], id=target["id"], summary="A traveller describes a journey."
-                ).model_dump()
+                ).model_dump(exclude_none=True)
                 for target in json.loads(parts[1])["TARGETS"]
             ]
         }
@@ -106,6 +109,7 @@ def test_batched_roots_keep_full_context_and_carry_earlier_summaries(
 
     monkeypatch.setattr("voice_archive_api.services.library.provider.genai.Client", create_test_client)
     monkeypatch.setattr("voice_archive_api.services.summary.cache.genai.Client", create_test_client)
+    monkeypatch.setattr("voice_archive_api.logic.summaries.SUMMARY_RESPONSE_TARGET_TOKENS", 6000)
 
     asyncio.run(
         summaries.generate_book_summaries(
@@ -165,7 +169,7 @@ def test_generation_failure_retains_accepted_set_and_version(client, summary_boo
         if problem == "invalid" and len(calls) == 1:
             return output_type(
                 summaries=[
-                    GeneratedSummary(
+                    GeneratedSummaryWithTranslation(
                         kind=target["kind"],
                         id=target["id"],
                         summary="A staged replacement summary.",
@@ -229,7 +233,7 @@ def test_cleared_run_stops_before_another_provider_request(client, summary_book,
         summaries.clear_book_summaries(factory, book_id)
         return output_type(
             summaries=[
-                GeneratedSummary(
+                GeneratedSummaryWithTranslation(
                     kind=target["kind"],
                     id=target["id"],
                     summary="A traveller returns home.",
@@ -261,7 +265,7 @@ def test_summary_generation_succeeds_with_only_batch_key(client, summary_book, m
         assert options.get("api_key") == SecretStr("only-batch-secret")
         return output_type(
             summaries=[
-                GeneratedSummary(
+                GeneratedSummaryWithTranslation(
                     kind=target["kind"],
                     id=target["id"],
                     summary="A traveller returns home.",
@@ -378,6 +382,8 @@ def test_resumes_validated_batches_without_rebilling_them(client, summary_series
         )
 
     monkeypatch.setattr(summaries, "generate_structured_output", generate_output)
+    monkeypatch.setattr("voice_archive_api.logic.summaries.SUMMARY_RESPONSE_TARGET_TOKENS", 6000)
+
     with factory() as db:
         original_version = db.get(Book, book_id).content_version
 

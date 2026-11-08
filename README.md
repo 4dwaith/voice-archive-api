@@ -405,8 +405,12 @@ oversize context is not retried. Database writes are never retried automatically
 Exit 1 means invalid input, unavailable source/provider or stale work; exit 3 means
 a database failure whose commit outcome should be inspected before retrying.
 
-Summary requests use the model's reported full output ceiling independently of the
-working batch target. Whole-book answers retain their existing response cap.
+Summary batches target approximately 12,000 output tokens, including an allowance
+for complete passage translations when needed. This is a batching estimate;
+requests use the model's reported full output ceiling independently of that target.
+English books use summary-only instructions and an output schema without translation
+fields. Non-English books add translation instructions and passage translation fields.
+Whole-book answers retain their existing response cap.
 
 Multi-request roots share an explicit provider cache when their context meets the
 configured model's 4,096-token caching minimum. Scopes with fewer than two

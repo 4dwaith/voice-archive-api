@@ -7,9 +7,9 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, field_validator
 
-POLICY = "reader-context-english-v7"
+POLICY = "reader-context-english-v8"
 # A conservative working response size, not the model's advertised output limit.
-SUMMARY_RESPONSE_TARGET_TOKENS = 6000
+SUMMARY_RESPONSE_TARGET_TOKENS = 12000
 SUMMARY_INSTRUCTIONS = (
     "INPUT\n"
     "SOURCE.fragments are ordered canonical text: section fragments are headings; passage fragments are prose. "
@@ -26,10 +26,12 @@ SUMMARY_INSTRUCTIONS = (
     "SUMMARIES\n"
     "Write one to four clear, conversational English sentences per target, with increasing detail for passages, sections and books. "
     "Make summaries understandable alone, replacing unclear pronouns with supported names or subjects while leaving unknown speakers unidentified. "
-    "For a section without passages, describe only its heading and lack of text.\n\n"
-    "TRANSLATIONS\n"
-    "When SOURCE.language is not en, provide english_translation for every segment: translate the entire passage into English, "
-    "preserving its details, order and pronouns without added explanations. Otherwise return null; also return null for sections and books. "
+    "For a section without passages, describe only its heading and lack of text."
+)
+TRANSLATION_INSTRUCTIONS = (
+    "\n\nTRANSLATIONS\n"
+    "Provide english_translation for every segment: translate the entire passage into English, "
+    "preserving its details, order and pronouns without added explanations. Return null for sections and books. "
     "Translate the supplied text as written, without correcting apparent factual, typographical or OCR errors. "
     "Preserve quotations and complete citation values and ranges; numeral scripts may change, but numbers must not. "
     "Retain any source word that cannot be reliably translated rather than guessing a repair. Do not add editorial corrections."
@@ -52,6 +54,17 @@ class GeneratedSummary(SummaryTarget):
     model_config = ConfigDict(extra="forbid", strict=True)
 
     summary: str
+
+    @field_validator("summary")
+    @classmethod
+    def validate_summary_text(cls, value: str) -> str:
+        if not value.strip() or "\x00" in value or len(value) > 8000:
+            raise ValueError("Expected a nonempty summary of at most 8000 characters")
+
+        return value.strip()
+
+
+class GeneratedSummaryWithTranslation(GeneratedSummary):
     english_translation: str | None = None
 
     @field_validator("english_translation")
@@ -63,15 +76,14 @@ class GeneratedSummary(SummaryTarget):
             raise ValueError("Expected a nonempty passage translation")
         return value.strip()
 
-    @field_validator("summary")
-    @classmethod
-    def validate_summary_text(cls, value: str) -> str:
-        if not value.strip() or "\x00" in value or len(value) > 8000:
-            raise ValueError("Expected a nonempty summary of at most 8000 characters")
-        return value.strip()
-
 
 class SummaryBatchResult(BaseModel):
+    model_config = ConfigDict(extra="forbid", strict=True)
+
+    summaries: list[GeneratedSummaryWithTranslation]
+
+
+class SummaryOnlyBatchResult(BaseModel):
     model_config = ConfigDict(extra="forbid", strict=True)
 
     summaries: list[GeneratedSummary]
@@ -205,7 +217,7 @@ def build_book_summary_input(book_id: int, book_fragments: list[BookContentFragm
     )
 
 
-def validate_summary_translations(drafts: list[GeneratedSummary], *, translate_passages: bool) -> None:
+def validate_summary_translations(drafts: list[GeneratedSummaryWithTranslation], *, translate_passages: bool) -> None:
     for draft in drafts:
         required = draft.kind == "segment" and translate_passages
         if (draft.english_translation is not None) != required:
@@ -293,7 +305,7 @@ def format_summary_context(
     )
 
 
-def validate_summary_coverage(targets: list[SummaryTarget], drafts: list[GeneratedSummary]) -> None:
+def validate_summary_coverage(targets: list[SummaryTarget], drafts: list[GeneratedSummaryWithTranslation]) -> None:
     expected = {(target.kind, target.id) for target in targets}
     actual = [(draft.kind, draft.id) for draft in drafts]
     if len(actual) != len(expected) or set(actual) != expected:

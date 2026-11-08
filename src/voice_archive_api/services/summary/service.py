@@ -24,13 +24,15 @@ from voice_archive_api.logic.books.validation import resolve_primary_language
 from voice_archive_api.logic.summaries import (
     POLICY,
     SUMMARY_INSTRUCTIONS,
+    TRANSLATION_INSTRUCTIONS,
     BookContentFragment,
     BookSummary,
     BookSummaryInput,
-    GeneratedSummary,
+    GeneratedSummaryWithTranslation,
     RootSectionSummaryInput,
     SectionSummary,
     SummaryBatchResult,
+    SummaryOnlyBatchResult,
     SummaryTarget,
     build_book_summary_input,
     build_content_summary_targets,
@@ -433,7 +435,9 @@ def save_summary_batch_checkpoint(
 
 
 def publish_book_summaries(
-    factory: sessionmaker[Session], generation_input: SummaryGenerationInput, drafts: list[GeneratedSummary]
+    factory: sessionmaker[Session],
+    generation_input: SummaryGenerationInput,
+    drafts: list[GeneratedSummaryWithTranslation],
 ) -> UUID:
     validate_summary_coverage(generation_input.build_targets(), drafts)
     validate_summary_translations(drafts, translate_passages=generation_input.is_passage_translation_required)
@@ -566,7 +570,12 @@ async def generate_and_publish_summaries(
     if generation_input.root_section_id is None:
         summary_inputs.append(build_book_summary_input(generation_input.book_id, generation_input.source_fragments))
     checkpoints = await run_in_threadpool(read_summary_batch_checkpoints, factory, generation_input.run_id)
-    drafts: list[GeneratedSummary] = []
+    drafts: list[GeneratedSummaryWithTranslation] = []
+    instructions = SUMMARY_INSTRUCTIONS
+    output_type: type[SummaryBatchResult] | type[SummaryOnlyBatchResult] = SummaryOnlyBatchResult
+    if generation_input.is_passage_translation_required:
+        instructions += TRANSLATION_INSTRUCTIONS
+        output_type = SummaryBatchResult
 
     async def record_usage(usage: types.GenerateContentResponseUsageMetadata | None) -> None:
         await run_in_threadpool(record_summary_token_usage, factory, generation_input.run_id, usage)
@@ -605,8 +614,8 @@ async def generate_and_publish_summaries(
             request_fingerprint = sha256(
                 json.dumps(
                     [
-                        SUMMARY_INSTRUCTIONS,
-                        SummaryBatchResult.model_json_schema(),
+                        instructions,
+                        output_type.model_json_schema(),
                         settings.gemini_text_model,
                         effort,
                         source,
@@ -616,9 +625,7 @@ async def generate_and_publish_summaries(
             ).hexdigest()
             batch_requests.append((targets, target_text, request_fingerprint))
         pending_batches = sum(fingerprint not in checkpoints for _, _, fingerprint in batch_requests)
-        async with create_summary_context_cache(
-            settings, SUMMARY_INSTRUCTIONS, source, enabled=pending_batches > 1
-        ) as cache:
+        async with create_summary_context_cache(settings, instructions, source, enabled=pending_batches > 1) as cache:
             for batch_index, (targets, target_text, request_fingerprint) in enumerate(batch_requests, start=1):
                 if saved_result := checkpoints.get(request_fingerprint):
                     await run_in_threadpool(ensure_summary_run_is_active, factory, generation_input.run_id)
@@ -640,17 +647,18 @@ async def generate_and_publish_summaries(
                     )
                     try:
                         provider_cache_name = await cache.get_available_name() if cache else None
-                        result = await generate_structured_output(
+                        generated_result = await generate_structured_output(
                             settings,
-                            SUMMARY_INSTRUCTIONS,
+                            instructions,
                             [target_text] if provider_cache_name else [source, target_text],
-                            SummaryBatchResult,
+                            output_type,
                             effort=effort,
                             api_key=settings.effective_gemini_batch_api_key,
                             max_output_tokens=None,
                             cached_content=provider_cache_name,
                             report_usage=record_usage,
                         )
+                        result = SummaryBatchResult.model_validate(generated_result.model_dump())  # For English only, the translation is automatically set to None
                         validate_summary_coverage(targets, result.summaries)
                         validate_summary_translations(
                             result.summaries, translate_passages=generation_input.is_passage_translation_required
