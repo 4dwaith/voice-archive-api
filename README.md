@@ -531,8 +531,46 @@ Both representations must fit. An oversized segment fails without splitting or
 truncation and preserves existing data. Dry-run reports assembled windows without
 writes. JSON goes to stdout and errors
 to stderr. Clear/purge/delete remove windows and cascade to their embeddings.
-Canonical content and client `content_version` are unchanged. No provider calls,
-windowing job records, batch submission, result collection or answer changes.
+Canonical content and client `content_version` are unchanged. Window rebuilding
+makes no provider calls and stores no windowing job records.
+
+## Embedding batch submission (16.4 checkpoint 2)
+
+```powershell
+submit-book-embeddings --book-id 34
+```
+
+Apply migration `0023_embedding_batches` first. The command uses
+`VOICE_ARCHIVE_GEMINI_BATCH_API_KEY`, falling back to `VOICE_ARCHIVE_GEMINI_API_KEY`.
+It submits existing window embeddings with NULL vectors, excluding outstanding
+requests for the same embedding ID and input hash. Stored model/dimension values
+drive submission; requests are grouped into one asynchronous batch per model.
+The command uploads UTF-8 JSONL and reports local/provider batch IDs as JSON.
+Each JSONL request key is its stored request UUID; dimensions are specified per
+request. The uploaded file name is recorded on the batch. No inline payloads or
+positional result mappings are used.
+It neither builds windows nor generates translations or summaries.
+
+Claims are committed before provider work. No book/series locks remain held during
+network calls. Request mappings preserve submitted IDs/hashes even if source
+windows are rebuilt or the book is deleted. Repeated submission skips active
+claims; it does not poll or populate vectors. Result collection belongs to
+checkpoint 3.
+
+Upload failure before batch creation and explicit provider rejection release
+claims for retry. A lost
+creation response, server failure or interrupted local publication leaves the
+batch in `submitting` with active claims. The error reports its local UUID, also
+used as Google's display name. Reconcile that display name in Google's batch list
+before retrying: attach the accepted provider name and mark the local job
+`submitted`, or, only after confirming no batch was accepted, mark it `failed`
+and deactivate its request claims in one transaction. Automated reconciliation
+is not implemented; uncertain submissions never expire into automatic retries.
+Earlier successful model batches remain submitted if a later model fails.
+Uploaded files can remain until provider expiry. Batch creation sends a file
+reference instead of the full book payload. Exit code 1 reports configuration/input/
+submission failure; exit code 3 reports a database failure. No `--book-id=all`,
+maintenance polling, result collection or answer changes are included.
 
 ## Prepared content domain (phase 08)
 

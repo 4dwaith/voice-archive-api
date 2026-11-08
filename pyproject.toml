@@ -83,4 +83,5 @@ ignore_missing_imports = true
 import-book-content = "voice_archive_api.cli.content_import:main"
 summarize-book = "voice_archive_api.cli.summaries:main"
 build-book-windows = "voice_archive_api.cli.windows:main"
+submit-book-embeddings = "voice_archive_api.cli.embeddings:main"
 

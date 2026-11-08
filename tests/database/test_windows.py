@@ -1,10 +1,13 @@
 """Transaction rollback and foreign-key cascading for retrieval windows."""
 
+from concurrent.futures import ThreadPoolExecutor
+
 import pytest
 from sqlalchemy import delete, event, select
 
 from voice_archive_api.db.models.content import BookSegment
 from voice_archive_api.db.models.windows import RetrievalWindow, WindowEmbedding
+from voice_archive_api.services.embedding_batches import claim_embedding_batch
 from voice_archive_api.services.windows import rebuild_book_windows
 
 
@@ -57,3 +60,18 @@ def test_deleting_windows_cascades_to_embeddings(window_book):
 
     with factory() as db:
         assert not db.scalars(select(WindowEmbedding)).all()
+
+
+def test_concurrent_batch_claims_do_not_duplicate_inputs(window_book):
+    factory, settings, book_id = window_book
+    rebuild_book_windows(factory, settings, book_id, len)
+
+    with ThreadPoolExecutor(max_workers=2) as workers:
+        claims = list(
+            workers.map(
+                lambda _: claim_embedding_batch(factory, book_id, settings.gemini_embedding_model),
+                range(2),
+            )
+        )
+
+    assert sum(claim is not None for claim in claims) == 1

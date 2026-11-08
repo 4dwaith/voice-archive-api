@@ -13,7 +13,7 @@ from voice_archive_api.db.models.content import BookSegment
 from voice_archive_api.db.models.windows import RetrievalWindow, WindowEmbedding
 from voice_archive_api.logic.windows import compute_embedding_input_hash
 
-scenarios("../features/windows")
+scenarios("../features/windows/rebuild.feature")
 
 
 @pytest.fixture(name="window_case")
