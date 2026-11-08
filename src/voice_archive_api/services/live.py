@@ -1,3 +1,4 @@
+import logging
 from datetime import UTC, datetime, timedelta
 
 import httpx
@@ -6,6 +7,9 @@ from google.genai import errors, types
 
 from voice_archive_api.core.config import Settings
 from voice_archive_api.core.errors import ApplicationError
+from voice_archive_api.core.logging import log_exception
+
+logger = logging.getLogger(__name__)
 
 
 class LiveUnavailableError(ApplicationError):
@@ -15,6 +19,7 @@ class LiveUnavailableError(ApplicationError):
 
 async def create_live_token(settings: Settings) -> str:
     if not settings.gemini_api_key or not settings.gemini_api_key.get_secret_value():
+        logger.error("Live token creation unavailable: VOICE_ARCHIVE_GEMINI_API_KEY is not configured")
         raise LiveUnavailableError
     now = datetime.now(UTC)
     try:
@@ -43,5 +48,6 @@ async def create_live_token(settings: Settings) -> str:
                 if not isinstance(token, str) or not token:
                     raise ValueError("Missing token")
     except (errors.APIError, httpx.HTTPError, TimeoutError, ValueError) as error:
+        log_exception(logger, "Live token creation failed", error, settings=settings)
         raise LiveUnavailableError from error
     return token

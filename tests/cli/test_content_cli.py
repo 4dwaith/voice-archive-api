@@ -156,7 +156,7 @@ def test_missing_configuration_is_reported_without_secrets(monkeypatch, argument
 
 
 @pytest.mark.parametrize("dry_run", [False, True])
-def test_database_failure_is_redacted_and_never_retried(monkeypatch, arguments, capsys, dry_run):
+def test_database_failure_is_redacted_and_never_retried(monkeypatch, arguments, capsys, dry_run, caplog):
     create_engine = Mock(side_effect=OperationalError("password=private-secret", {}, Exception("private-secret")))
     monkeypatch.setitem(content_import.__dict__, "create_database_engine", create_engine)
 
@@ -166,6 +166,7 @@ def test_database_failure_is_redacted_and_never_retried(monkeypatch, arguments, 
     output = capsys.readouterr().err
     assert "private-secret" not in output
     assert "no automatic retry" in output
+    assert "private-secret" not in caplog.text
 
 
 @pytest.mark.parametrize("book_id", ["0", "-1", "9223372036854775808"])

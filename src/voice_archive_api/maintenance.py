@@ -11,6 +11,7 @@ from types import FrameType
 from apscheduler.schedulers.blocking import BlockingScheduler
 
 from voice_archive_api.core.config import Settings
+from voice_archive_api.core.logging import log_exception
 from voice_archive_api.db.session import create_database_engine, create_session_factory
 from voice_archive_api.file_handling import LocalStorage
 from voice_archive_api.file_handling.cleanup import run_temporary_cleanup
@@ -59,23 +60,23 @@ def run_in_sequence(
     if temporary_job is not None:
         try:
             temporary_job()
-        except Exception:
+        except Exception as exc:
             failed = True
-            logger.exception("Temporary-file cleanup failed")
+            log_exception(logger, "Temporary-file cleanup failed", exc)
     if promoted_job is not None:
         try:
             if promoted_job().failures:
                 failed = True
-        except Exception:
+        except Exception as exc:
             failed = True
-            logger.exception("Promoted-file cleanup failed")
+            log_exception(logger, "Promoted-file cleanup failed", exc)
     if orphan_job is not None:
         try:
             if orphan_job().failures:
                 failed = True
-        except Exception:
+        except Exception as exc:
             failed = True
-            logger.exception("Orphan-file cleanup failed")
+            log_exception(logger, "Orphan-file cleanup failed", exc)
     return int(failed)
 
 

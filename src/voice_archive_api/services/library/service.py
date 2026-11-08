@@ -1,3 +1,5 @@
+import logging
+
 import httpx
 from google.genai import errors
 from sqlalchemy import select
@@ -5,12 +7,15 @@ from sqlalchemy.orm import Session, sessionmaker
 from starlette.concurrency import run_in_threadpool
 
 from voice_archive_api.core.config import Settings
+from voice_archive_api.core.logging import log_exception
 from voice_archive_api.db.models.book import Book
 from voice_archive_api.db.models.content import BookSection, BookSegment
 from voice_archive_api.logic.library import BookSnapshot, EvidenceSegment, SourceSegment
 from voice_archive_api.services.content.reads import lock_book
 from voice_archive_api.services.library import provider
 from voice_archive_api.services.library.schemas import AnswerReference, AskRequest, AskResult
+
+logger = logging.getLogger(__name__)
 
 
 def read_book_snapshot(factory: sessionmaker[Session], book_id: int) -> BookSnapshot | None:
@@ -70,7 +75,8 @@ async def ask_book(factory: sessionmaker[Session], settings: Settings, request: 
         return AskResult(
             status="oversize", answer="", limitations=["The complete book exceeds the model input budget."]
         )
-    except errors.APIError, httpx.HTTPError, TimeoutError, ValueError, KeyError:
+    except (errors.APIError, httpx.HTTPError, TimeoutError, ValueError, KeyError) as exc:
+        log_exception(logger, f"Book answer generation failed: book={request.book_id}", exc, settings=settings)
         return AskResult(status="unavailable", answer="", limitations=["An answer is unavailable; please retry later."])
     if not await run_in_threadpool(is_source_current, factory, snapshot):
         return AskResult(status="stale", answer="", limitations=["Book content changed while answering; ask again."])

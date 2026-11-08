@@ -1,3 +1,4 @@
+import logging
 from typing import Annotated, Any
 
 from fastapi import APIRouter, Depends, File, Path, Response, UploadFile
@@ -7,6 +8,7 @@ from voice_archive_api.api.schemas.errors import ValidationErrorResponse
 from voice_archive_api.api.schemas.files import FileErrorResponse, FileUploadErrorResponse
 from voice_archive_api.api.v1.file_uploads import UploadRoute
 from voice_archive_api.core.dependencies import AppSettings, Delivery, FileStorage
+from voice_archive_api.core.logging import log_exception
 from voice_archive_api.db.models.file import StoredFile
 from voice_archive_api.db.session import get_db
 from voice_archive_api.file_handling.file_delivery import delivery_parameters, delivery_responses
@@ -14,6 +16,8 @@ from voice_archive_api.logic.files import FileKind
 from voice_archive_api.services.files import service
 from voice_archive_api.services.files.schemas import FileResponse
 from voice_archive_api.services.files.service import FILE_STRATEGIES
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/files", tags=["Files"], route_class=UploadRoute)
 FileId = Annotated[int, Path(gt=0, le=9_223_372_036_854_775_807)]
@@ -78,6 +82,7 @@ def get_file(
     try:
         return delivery.response(record.storage_key, media_type=strategy.media_type, filename=strategy.filename)
     except FileNotFoundError as exc:
+        log_exception(logger, f"Stored file bytes are missing: file={file_id}", exc)
         raise service.FileNotFound from exc
 
 

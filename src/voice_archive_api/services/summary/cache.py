@@ -12,6 +12,7 @@ from google import genai
 from google.genai import errors, types
 
 from voice_archive_api.core.config import Settings
+from voice_archive_api.core.logging import log_exception
 
 logger = logging.getLogger(__name__)
 CACHE_TTL_SECONDS = 1200
@@ -41,8 +42,15 @@ class SummaryContextCache:
             if updated.expire_time is not None:
                 self.expires_at = updated.expire_time
                 return self.provider_cache_name
-        except errors.APIError, httpx.HTTPError, TimeoutError, ValueError:
-            pass
+        except (errors.APIError, httpx.HTTPError, TimeoutError, ValueError) as exc:
+            log_exception(
+                logger,
+                "Summary cache renewal failed; using canonical context",
+                exc,
+                settings=self.settings,
+                level=logging.WARNING,
+            )
+            return None
         logger.warning("Summary cache renewal unavailable; using canonical context directly")
         return None
 
@@ -82,8 +90,14 @@ async def create_summary_context_cache(
                         )
                         if created.name and created.expire_time:
                             cache = SummaryContextCache(async_client, settings, created.name, created.expire_time)
-            except errors.APIError, httpx.HTTPError, TimeoutError, ValueError:
-                logger.warning("Summary cache preparation unavailable; using canonical context directly")
+            except (errors.APIError, httpx.HTTPError, TimeoutError, ValueError) as exc:
+                log_exception(
+                    logger,
+                    "Summary cache preparation unavailable; using canonical context directly",
+                    exc,
+                    settings=settings,
+                    level=logging.WARNING,
+                )
             try:
                 yield cache
             finally:
@@ -91,5 +105,11 @@ async def create_summary_context_cache(
                     try:
                         async with asyncio.timeout(settings.gemini_answer_timeout_seconds):
                             await async_client.caches.delete(name=cache.provider_cache_name)
-                    except errors.APIError, httpx.HTTPError, TimeoutError, ValueError:
-                        logger.warning("Summary cache cleanup unavailable; its TTL will expire")
+                    except (errors.APIError, httpx.HTTPError, TimeoutError, ValueError) as exc:
+                        log_exception(
+                            logger,
+                            "Summary cache cleanup unavailable; its TTL will expire",
+                            exc,
+                            settings=settings,
+                            level=logging.WARNING,
+                        )

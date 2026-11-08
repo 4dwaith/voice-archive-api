@@ -1,3 +1,4 @@
+import logging
 from typing import Annotated
 
 from fastapi import APIRouter, Depends
@@ -13,7 +14,10 @@ from voice_archive_api.api.v1.files import router as files_router
 from voice_archive_api.api.v1.library import router as library_router
 from voice_archive_api.api.v1.live import router as live_router
 from voice_archive_api.api.v1.series import router as series_router
+from voice_archive_api.core.logging import log_exception
 from voice_archive_api.db.session import get_db
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter()
 router.include_router(books_router)
@@ -44,7 +48,8 @@ def health() -> HealthResponse:
 def ready(db: Annotated[Session, Depends(get_db)]) -> HealthResponse | JSONResponse:
     try:
         db.execute(text("SELECT 1"))
-    except SQLAlchemyError:
+    except SQLAlchemyError as exc:
+        log_exception(logger, "Database readiness check failed", exc)
         return JSONResponse(
             status_code=503,
             content={"status": "unavailable", "api_version": "v1"},

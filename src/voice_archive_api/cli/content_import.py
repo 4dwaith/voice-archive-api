@@ -2,6 +2,7 @@
 
 import argparse
 import json
+import logging
 import sys
 from dataclasses import asdict
 from pathlib import Path
@@ -11,10 +12,13 @@ from sqlalchemy.exc import SQLAlchemyError
 
 from voice_archive_api.core.config import Settings
 from voice_archive_api.core.errors import ApplicationError
+from voice_archive_api.core.logging import log_exception
 from voice_archive_api.db.session import create_database_engine, create_session_factory
 from voice_archive_api.logic.content_validation.schemas import MAX_PAYLOAD_BYTES
 from voice_archive_api.logic.content_validation.validation import ContentValidationError, validate_content
 from voice_archive_api.services.content import service
+
+logger = logging.getLogger(__name__)
 
 
 def run(argv: list[str] | None = None) -> int:
@@ -36,7 +40,8 @@ def run(argv: list[str] | None = None) -> int:
         validated = validate_content(payload)
         try:
             settings = Settings()
-        except ValidationError:
+        except ValidationError as exc:
+            log_exception(logger, "Content import configuration failed", exc)
             print("Invalid configuration; check the VOICE_ARCHIVE_* environment variables", file=sys.stderr)
             return 1
 
@@ -64,7 +69,8 @@ def run(argv: list[str] | None = None) -> int:
     except ApplicationError as exc:
         print(json.dumps({"error": {"code": exc.code, "message": exc.message}}), file=sys.stderr)
         return 1
-    except SQLAlchemyError:
+    except SQLAlchemyError as exc:
+        log_exception(logger, f"Content import database operation failed: book={args.book_id}", exc, settings=settings)
         # Exception text can contain connection credentials. A lost connection at
         # commit can leave publication uncertain, so never retry automatically.
         print("Database operation failed; no automatic retry was attempted.", file=sys.stderr)

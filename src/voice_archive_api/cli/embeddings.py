@@ -2,6 +2,7 @@
 
 import argparse
 import json
+import logging
 import sys
 
 from pydantic_settings.exceptions import SettingsError
@@ -9,8 +10,11 @@ from sqlalchemy.exc import SQLAlchemyError
 
 from voice_archive_api.core.config import Settings
 from voice_archive_api.core.errors import ApplicationError
+from voice_archive_api.core.logging import log_exception
 from voice_archive_api.db.session import create_database_engine, create_session_factory
 from voice_archive_api.services.embedding_batches import submit_book_embedding_batches
+
+logger = logging.getLogger(__name__)
 
 
 def run(argv: list[str] | None = None) -> int:
@@ -22,7 +26,8 @@ def run(argv: list[str] | None = None) -> int:
     try:
         try:
             settings = Settings()
-        except ValueError, SettingsError:
+        except (ValueError, SettingsError) as exc:
+            log_exception(logger, "Embedding CLI configuration failed", exc)
             print("Invalid configuration; check VOICE_ARCHIVE_* environment variables", file=sys.stderr)
             return 1
         engine = create_database_engine(settings.database_url)
@@ -36,7 +41,8 @@ def run(argv: list[str] | None = None) -> int:
         print(exc.message, file=sys.stderr)
     except ValueError as exc:
         print(str(exc), file=sys.stderr)
-    except SQLAlchemyError:
+    except SQLAlchemyError as exc:
+        log_exception(logger, f"Embedding CLI database operation failed: book={args.book_id}", exc, settings=settings)
         print("Database operation failed; verify batch records before retrying", file=sys.stderr)
         return 3
     return 1

@@ -8,6 +8,7 @@ from itertools import islice
 from sqlalchemy import exists, select, tuple_
 from sqlalchemy.orm import Session, sessionmaker
 
+from voice_archive_api.core.logging import log_exception
 from voice_archive_api.db.models.file import FileCleanupProgress, PendingFileDeletion, StoredFile
 from voice_archive_api.file_handling import Storage
 from voice_archive_api.services.files.service import queue_file_deletion
@@ -112,10 +113,10 @@ def delete_pending_files(factory: sessionmaker[Session], storage: Storage) -> tu
                 cursor = record.storage_key
                 try:
                     storage.delete(record.storage_key)
-                except Exception:
+                except Exception as exc:
                     failures += 1
-                    logger.exception(
-                        "File deletion failed; retaining pending deletion for retry: %s", record.storage_key
+                    log_exception(
+                        logger, f"File deletion failed; retaining pending deletion for retry: {record.storage_key}", exc
                     )
                 else:
                     db.delete(record)
@@ -164,9 +165,9 @@ def delete_orphan_files(factory: sessionmaker[Session], storage: Storage, now: d
                     continue
                 try:
                     storage.delete(key)
-                except Exception:
+                except Exception as exc:
                     failures += 1
-                    logger.exception("Orphan file deletion failed; will retry next scan: %s", key)
+                    log_exception(logger, f"Orphan file deletion failed; will retry next scan: {key}", exc)
                 else:
                     deleted += 1
     finally:

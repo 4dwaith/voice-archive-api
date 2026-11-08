@@ -17,6 +17,7 @@ from sqlalchemy.sql.elements import ColumnElement
 from starlette.concurrency import run_in_threadpool
 
 from voice_archive_api.core.config import Settings
+from voice_archive_api.core.logging import log_exception
 from voice_archive_api.db.models.book import Book
 from voice_archive_api.db.models.content import BookSection, BookSegment
 from voice_archive_api.db.models.summary import SummaryBatchCheckpoint, SummaryGenerationRun
@@ -371,8 +372,13 @@ def fail_summary_run(factory: sessionmaker[Session], run_id: UUID) -> None:
                     failure_reason="Summary generation or publication failed",
                 )
             )
-    except SQLAlchemyError:
-        logger.warning("Unable to record summary run failure; a later invocation can recover after four hours")
+    except SQLAlchemyError as exc:
+        log_exception(
+            logger,
+            f"Unable to record summary run failure: run={run_id}; recover after four hours",
+            exc,
+            level=logging.WARNING,
+        )
 
 
 def ensure_summary_run_is_active(factory: sessionmaker[Session], run_id: UUID) -> None:
@@ -658,7 +664,9 @@ async def generate_and_publish_summaries(
                             cached_content=provider_cache_name,
                             report_usage=record_usage,
                         )
-                        result = SummaryBatchResult.model_validate(generated_result.model_dump())  # For English only, the translation is automatically set to None
+                        result = SummaryBatchResult.model_validate(
+                            generated_result.model_dump()
+                        )  # For English only, the translation is automatically set to None
                         validate_summary_coverage(targets, result.summaries)
                         validate_summary_translations(
                             result.summaries, translate_passages=generation_input.is_passage_translation_required
@@ -675,31 +683,24 @@ async def generate_and_publish_summaries(
                         drafts.extend(result.summaries)
                         break
                     except BookTooLargeError as exc:
-                        logger.exception(
-                            "Summary input exceeds model limit: run=%s book=%s target=%s:%s batch=%s/%s attempt=%s/%s",
-                            generation_input.run_id,
-                            generation_input.book_id,
-                            summary_input.source_target.kind,
-                            summary_input.source_target.id,
-                            batch_index,
-                            len(batches),
-                            attempt + 1,
-                            retries + 1,
+                        log_exception(
+                            logger,
+                            f"Summary input exceeds model limit: run={generation_input.run_id} book={generation_input.book_id} "
+                            f"target={summary_input.source_target.kind}:{summary_input.source_target.id} batch={batch_index}",
+                            exc,
+                            settings=settings,
                         )
                         raise ValueError(
                             f"{summary_input.source_target.kind} {summary_input.source_target.id}: complete canonical context exceeds the model input limit"
                         ) from exc
                     except (errors.APIError, httpx.HTTPError, TimeoutError, ValueError) as exc:
-                        logger.exception(
-                            "Summary generation attempt failed: run=%s book=%s target=%s:%s batch=%s/%s attempt=%s/%s",
-                            generation_input.run_id,
-                            generation_input.book_id,
-                            summary_input.source_target.kind,
-                            summary_input.source_target.id,
-                            batch_index,
-                            len(batches),
-                            attempt + 1,
-                            retries + 1,
+                        log_exception(
+                            logger,
+                            f"Summary generation attempt failed: run={generation_input.run_id} book={generation_input.book_id} "
+                            f"target={summary_input.source_target.kind}:{summary_input.source_target.id} "
+                            f"batch={batch_index}/{len(batches)} attempt={attempt + 1}/{retries + 1}",
+                            exc,
+                            settings=settings,
                         )
                         # A cache must not make a generation retry depend on the
                         # same unavailable/expired provider resource.

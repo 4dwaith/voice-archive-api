@@ -91,7 +91,7 @@ def test_live_without_configuration_is_unavailable(schema_only_client, mock_gemi
 
 
 @pytest.mark.parametrize("failure", ["network", "rejected", "invalid", "timeout"])
-def test_live_provider_failures_hide_credentials(schema_only_client, mock_gemini_client, failure):
+def test_live_provider_failures_hide_credentials(schema_only_client, mock_gemini_client, failure, caplog):
     schema_only_client.app.state.settings.gemini_api_key = SecretStr("server-secret")
     failures = {
         "network": httpx.ConnectError("server-secret"),
@@ -107,6 +107,7 @@ def test_live_provider_failures_hide_credentials(schema_only_client, mock_gemini
     assert response.status_code == 503
     assert response.json()["error"]["code"] == "live_unavailable"
     assert "server-secret" not in response.text
+    assert "server-secret" not in caplog.text
     client.aio.__aexit__.assert_awaited_once()
     client.__exit__.assert_called_once()
 

@@ -5,6 +5,14 @@ CRUD and pagination, optional cover/PDF links, file uploads, and range-enabled
 file delivery. The frontend is a separate project; authentication is not
 implemented yet.
 
+Operational failures consumed by CLI, HTTP/provider fallbacks or maintenance are
+logged with their causes, stack locations and operation/resource identifiers.
+`core/logging.py` redacts configured credentials and omits SQL statements/parameters,
+validation input values and traceback locals. Public HTTP errors remain generic;
+operator details go to server logs or CLI stderr. Expected validation and normal
+cancellation do not produce duplicate error reports. See the shared
+[error-diagnostic convention](../AGENTS.md#error-diagnostics).
+
 ## Run
 
 Install Docker Desktop with Linux containers. From this directory, copy
@@ -558,7 +566,8 @@ claims; it does not poll or populate vectors. Result collection belongs to
 checkpoint 3.
 
 Upload failure before batch creation and explicit provider rejection release
-claims for retry. A lost
+claims for retry. Rejection diagnostics include Google's HTTP code, status and
+message, with configured API keys redacted. A lost
 creation response, server failure or interrupted local publication leaves the
 batch in `submitting` with active claims. The error reports its local UUID, also
 used as Google's display name. Reconcile that display name in Google's batch list

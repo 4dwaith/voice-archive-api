@@ -55,7 +55,15 @@ def prepare_embedding_book(client, summary_book, monkeypatch):
         if state["mode"] == "timeout":
             raise httpx.ReadTimeout("batch-secret", request=request)
         if state["mode"] == "rejection":
-            return httpx.Response(403, json={"error": {"message": "batch-secret"}})
+            return httpx.Response(
+                403,
+                json={
+                    "error": {
+                        "status": "PERMISSION_DENIED",
+                        "message": "Batch embeddings are disabled for this project (key=batch-secret)",
+                    }
+                },
+            )
         if state["mode"] == "rebuild":
             rebuild_book_windows(factory, settings, book_id, len)
         return httpx.Response(200, json={"name": f"batches/accepted-{len(state['submissions'])}"})
@@ -182,9 +190,10 @@ def verify_missing_vector_submission(client, batch_case):
 
 @then("its failed upload claims are released")
 @then("its rejected submission claims are released")
-def verify_released_claims(client, batch_case):
+def verify_released_claims(client, batch_case, caplog):
     assert batch_case["exit_code"] == 1
     assert "batch-secret" not in batch_case["output"].err
+    assert "batch-secret" not in caplog.text
     with client.app.state.session_factory() as db:
         assert db.scalars(select(EmbeddingBatchJob.state)).all() == ["failed"]
         assert db.scalars(select(EmbeddingBatchRequest.active)).all() == [False, False]

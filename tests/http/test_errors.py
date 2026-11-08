@@ -56,7 +56,7 @@ def boundary_client(tmp_path):
 
     @app.get("/test-failure")
     def fail():
-        raise OSError("PRIVATE_EXCEPTION_TEXT")
+        raise OSError("Disk unavailable")
 
     @app.get("/test-application-failure/{case}")
     def fail_application(case: int):
@@ -140,8 +140,7 @@ def test_errors_have_an_envelope_request_id_and_cors(boundary_client, caplog, pa
         assert len(records) == 1
         assert records[0].correlation_id == request_id
         assert "OSError" in records[0].getMessage()
-        # No exception message or request body is included in application logs.
-        assert "PRIVATE_EXCEPTION_TEXT" not in records[0].getMessage()
+        assert "Disk unavailable" not in response.text
 
 
 def test_method_error_retains_allow_header(boundary_client):

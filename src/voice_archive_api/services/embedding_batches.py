@@ -2,6 +2,7 @@
 
 import io
 import json
+import logging
 from uuid import UUID, uuid4
 
 from google import genai
@@ -10,10 +11,13 @@ from sqlalchemy import select, update
 from sqlalchemy.orm import Session, sessionmaker
 
 from voice_archive_api.core.config import Settings
+from voice_archive_api.core.logging import log_exception
 from voice_archive_api.db.models.embedding_batch import EmbeddingBatchJob, EmbeddingBatchRequest
 from voice_archive_api.db.models.windows import RetrievalWindow, WindowEmbedding
 from voice_archive_api.logic.windows import compute_embedding_input_hash, format_embedding_input
 from voice_archive_api.services.books.service import BookNotFound, lock_book_for_series_write
+
+logger = logging.getLogger(__name__)
 
 
 def claim_embedding_batch(factory: sessionmaker[Session], book_id: int, model: str) -> tuple[UUID, bytes, int] | None:
@@ -140,7 +144,10 @@ def submit_book_embedding_batches(
                         .where(EmbeddingBatchJob.id == batch_id)
                         .values(input_file_name=uploaded.name)
                     )
-            except Exception:
+            except Exception as exc:
+                log_exception(
+                    logger, f"Embedding input upload failed: batch={batch_id} book={book_id}", exc, settings=settings
+                )
                 # No batch creation was attempted, so these inputs can safely be retried.
                 release_failed_embedding_batch(factory, batch_id)
                 raise ValueError(f"Batch {batch_id}: input upload failed; submission can be retried") from None
@@ -160,13 +167,31 @@ def submit_book_embedding_batches(
                         .values(provider_name=created.name, state="submitted")
                     )
             except errors.ClientError as exc:
+                log_exception(
+                    logger,
+                    f"Embedding batch rejected: batch={batch_id} book={book_id} model={model}",
+                    exc,
+                    settings=settings,
+                )
+                reason = f"HTTP {exc.code} {exc.status or 'UNKNOWN'}: {exc.message or 'No provider reason supplied'}"
+                for configured_key in (settings.gemini_api_key, settings.gemini_batch_api_key):
+                    if configured_key and (secret := configured_key.get_secret_value()):
+                        reason = reason.replace(secret, "[redacted]")
                 if exc.code == 408:
                     raise ValueError(
-                        f"Batch {batch_id}: submission timed out; claims retained for reconciliation"
+                        f"Batch {batch_id}: submission timed out ({reason}); claims retained for reconciliation"
                     ) from None
                 release_failed_embedding_batch(factory, batch_id)
-                raise ValueError(f"Batch {batch_id}: provider rejected submission; submission can be retried") from None
-            except Exception:
+                raise ValueError(
+                    f"Batch {batch_id}: provider rejected submission ({reason}); submission can be retried"
+                ) from None
+            except Exception as exc:
+                log_exception(
+                    logger,
+                    f"Embedding submission outcome uncertain: batch={batch_id} book={book_id}",
+                    exc,
+                    settings=settings,
+                )
                 # Includes a lost response or failed local publication after provider acceptance.
                 raise ValueError(
                     f"Batch {batch_id}: submission outcome uncertain; claims retained. "

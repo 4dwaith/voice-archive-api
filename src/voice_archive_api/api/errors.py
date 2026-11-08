@@ -1,5 +1,4 @@
 import logging
-from traceback import extract_tb
 
 from fastapi import FastAPI, Request
 from fastapi.exceptions import RequestValidationError
@@ -8,6 +7,7 @@ from starlette.exceptions import HTTPException
 
 from voice_archive_api.api.schemas.errors import HttpErrorResponse, InternalErrorResponse
 from voice_archive_api.core.errors import ApplicationError
+from voice_archive_api.core.logging import log_exception
 from voice_archive_api.logic.content_validation.validation import ContentValidationError
 
 logger = logging.getLogger(__name__)
@@ -80,12 +80,7 @@ def install_error_handlers(app: FastAPI) -> None:
 
     @app.exception_handler(Exception)
     async def unexpected_error(request: Request, exc: Exception) -> JSONResponse:
-        # Stack locations and exception type are useful without recording exception
-        # text/locals, which can contain SQL parameters or submitted file content.
-        locations = "\n".join(
-            f"{frame.filename}:{frame.lineno} in {frame.name}" for frame in extract_tb(exc.__traceback__)
-        )
-        logger.error("Unhandled request failure (%s)\n%s", type(exc).__name__, locations)
+        log_exception(logger, "Unhandled request failure", exc, settings=request.app.state.settings)
         return JSONResponse(
             status_code=500,
             content={"error": {"code": "internal_error", "message": "An unexpected error occurred"}},

@@ -11,8 +11,11 @@ from sqlalchemy.exc import SQLAlchemyError
 
 from voice_archive_api.core.config import Settings
 from voice_archive_api.core.errors import ApplicationError
+from voice_archive_api.core.logging import log_exception
 from voice_archive_api.db.session import create_database_engine, create_session_factory
 from voice_archive_api.services.summary.service import clear_book_summaries, generate_book_summaries
+
+logger = logging.getLogger(__name__)
 
 
 def run(argv: list[str] | None = None) -> int:
@@ -47,7 +50,8 @@ def run(argv: list[str] | None = None) -> int:
     try:
         try:
             settings = Settings()
-        except ValueError, SettingsError:
+        except (ValueError, SettingsError) as exc:
+            log_exception(logger, "Summary CLI configuration failed", exc)
             print("Invalid configuration; check VOICE_ARCHIVE_* environment variables", file=sys.stderr)
             return 1
         engine = create_database_engine(settings.database_url)
@@ -79,7 +83,8 @@ def run(argv: list[str] | None = None) -> int:
     except ValueError as exc:
         print(str(exc), file=sys.stderr)
         return 1
-    except SQLAlchemyError:
+    except SQLAlchemyError as exc:
+        log_exception(logger, f"Summary CLI database operation failed: book={args.book_id}", exc, settings=settings)
         print(
             "Database operation failed. Inspect the book before retrying; publication may have committed.",
             file=sys.stderr,
