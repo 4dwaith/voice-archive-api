@@ -167,6 +167,48 @@ The live `/openapi.json` is the frontend generation input. There is no committed
 schema snapshot, export command, or stale-artifact check. Contract tests verify
 operation IDs, error schemas, multipart/binary responses, nullability, and limits.
 
+## PostgreSQL image and pgvector
+
+Both `db` and `db-test` use `pgvector/pgvector:0.8.7-pg18-bookworm` instead of
+`postgres:18-bookworm`. This is PostgreSQL 18 on Debian Bookworm with the pgvector
+server library, control file and extension SQL already installed. No manual
+installation inside a running container or custom database Dockerfile is needed.
+The image comes from the [pgvector project](https://github.com/pgvector/pgvector#docker).
+The Python `pgvector` dependency supplies SQLAlchemy integration; it does not
+install the PostgreSQL server extension.
+
+Migration `0026_pgvector` runs `CREATE EXTENSION IF NOT EXISTS vector` to enable
+the installed extension in that database, then converts `window_embeddings.vector`
+from `double precision[]` to native `vector` using the stored values. Embedding
+IDs, hashes, batch request links and pending NULL vectors are preserved; no
+re-embedding/provider request is required. The dimension check now uses
+`vector_dims`. Dimensions remain row-specific rather than fixing every row at 768.
+Native vectors use single precision, so conversion rounds values accordingly;
+downgrading restores the array type but cannot recover the original extra precision.
+Invalid/unrepresentable stored values abort the transactional migration rather
+than being dropped. Downgrade leaves the extension installed for other consumers.
+
+Changing an image does not delete a named volume. Keep the same PostgreSQL major
+version, Compose project and `postgres-data:/var/lib/postgresql` mount. Before an
+application database image replacement or migration, save a custom-format
+`pg_dump` outside Docker and test restoring it to an isolated database. Do not use
+`docker compose down -v`: that removes the named data volume. The conversion
+rewrites/locks the embedding table, so schedule the application migration with
+writers stopped. Deployment commands belong in `D:\voice_archive\deploy` to retain
+the existing PDF/audio bind mounts.
+
+The pre-conversion backup is in
+`D:/voice_archive/backups/before-pgvector-20261108T234520Z/`: `voice_archive.dump`,
+password-free globals, archive contents, SHA-256 and restore verification. The
+timestamp is UTC (2026-11-09 in India). This is a database backup; external PDF,
+cover and audio bytes on `H:/voice_archive_data` are not included in `pg_dump`.
+After explicit approval, application migration `0026_pgvector` was applied on
+2026-11-09 using a fresh restore-verified backup at
+`D:/voice_archive/backups/before-pgvector-apply-20261108T235309Z/`. PostgreSQL remains
+18.6 on the original volume, with pgvector 0.8.7 enabled. Preservation checks and
+post-deployment application/media results are recorded in
+[the chunk implementation record](../plan/16.5-dense-retrieval.md#application-pgvector-migration---2026-11-09).
+
 ## Tests
 
 ```powershell

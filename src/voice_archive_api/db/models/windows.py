@@ -2,7 +2,8 @@
 
 from uuid import UUID
 
-from sqlalchemy import BigInteger, CheckConstraint, Double, ForeignKey, Integer, String, Text, UniqueConstraint, Uuid
+from pgvector.sqlalchemy import VECTOR
+from sqlalchemy import BigInteger, CheckConstraint, ForeignKey, Integer, String, Text, UniqueConstraint, Uuid
 from sqlalchemy.dialects.postgresql import ARRAY
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -31,7 +32,7 @@ class WindowEmbedding(Base):
             "window_id", "kind", "model", "dimensions", "input_format", name="uq_window_embedding_profile"
         ),
         CheckConstraint(
-            "vector IS NULL OR cardinality(vector) = dimensions", name="window_embedding_vector_dimensions"
+            "vector IS NULL OR vector_dims(vector) = dimensions", name="window_embedding_vector_dimensions"
         ),
     )
 
@@ -46,4 +47,4 @@ class WindowEmbedding(Base):
     )
     input_format: Mapped[str] = mapped_column(Text)
     input_hash: Mapped[str] = mapped_column(String(64))
-    vector: Mapped[list[float] | None] = mapped_column(ARRAY(Double))
+    vector: Mapped[list[float] | None] = mapped_column(VECTOR())
