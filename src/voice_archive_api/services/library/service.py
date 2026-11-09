@@ -1,83 +1,143 @@
+import asyncio
 import logging
 
 import httpx
 from google.genai import errors
-from sqlalchemy import select
+from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session, sessionmaker
 from starlette.concurrency import run_in_threadpool
 
 from voice_archive_api.core.config import Settings
 from voice_archive_api.core.logging import log_exception
-from voice_archive_api.db.models.book import Book
-from voice_archive_api.db.models.content import BookSection, BookSegment
-from voice_archive_api.logic.library import BookSnapshot, EvidenceSegment, SourceSegment
-from voice_archive_api.services.content.reads import lock_book
-from voice_archive_api.services.library import provider
+from voice_archive_api.logic.books.validation import resolve_primary_language
+from voice_archive_api.logic.dense import WindowMatch, resolve_query_texts, select_segment_ids
+from voice_archive_api.logic.library import EvidenceSegment
+from voice_archive_api.services.library import provider, retrieval
 from voice_archive_api.services.library.schemas import AnswerReference, AskRequest, AskResult
 
 logger = logging.getLogger(__name__)
 
 
-def read_book_snapshot(factory: sessionmaker[Session], book_id: int) -> BookSnapshot | None:
-    with factory.begin() as db:
-        book = lock_book(db, book_id)
-        if book.content_version is None:
-            return None
-        sections = {row.id: row for row in db.scalars(select(BookSection).where(BookSection.book_id == book_id))}
-        segments = []
-        for row in db.scalars(select(BookSegment).where(BookSegment.book_id == book_id).order_by(BookSegment.sequence)):
-            path = []
-            section_id = row.section_id
-            while section_id is not None:
-                section = sections[section_id]
-                path.append(section.title)
-                section_id = section.parent_id
-            segments.append(
-                SourceSegment(
-                    segment_id=row.id,
-                    section_id=row.section_id,
-                    path=[book.title, *reversed(path)],
-                    sequence=row.sequence,
-                    text=row.text_content,
-                )
-            )
-        return BookSnapshot(book_id=book.id, content_version=book.content_version, title=book.title, segments=segments)
-
-
-def is_source_current(factory: sessionmaker[Session], snapshot: BookSnapshot) -> bool:
-    with factory.begin() as db:
-        return db.scalar(select(Book.content_version).where(Book.id == snapshot.book_id)) == snapshot.content_version
-
-
-async def ask_book(factory: sessionmaker[Session], settings: Settings, request: AskRequest) -> AskResult:
-    snapshot = await run_in_threadpool(read_book_snapshot, factory, request.book_id)
-    if snapshot is None or not snapshot.segments:
-        return AskResult(
-            status="unavailable", answer="", limitations=["This book has no published text to answer from."]
-        )
+async def answer_library_question(factory: sessionmaker[Session], settings: Settings, request: AskRequest) -> AskResult:
     try:
-        evidence = [
-            EvidenceSegment(segment_id=segment.segment_id, path=segment.path, text=segment.text)
-            for segment in snapshot.segments
-        ]
-        draft = await provider.generate_answer(settings, request.query, evidence, request.effort)
-        segments = {segment.segment_id: segment for segment in snapshot.segments}
-        references = [
-            AnswerReference(
-                **segments[reference.segment_id].model_dump(),
-                book_id=snapshot.book_id,
-                content_version=snapshot.content_version,
-                relevance=reference.relevance,
-            )
-            for reference in draft.references
-        ]
-    except provider.BookTooLargeError:
+        async with asyncio.timeout(settings.gemini_answer_timeout_seconds):
+            if request.use_whole_book:
+                snapshot = await run_in_threadpool(retrieval.read_source_snapshot, factory, request)
+                if not snapshot.books or any(
+                    book.content_version is None or not book.has_text for book in snapshot.books
+                ):
+                    return AskResult(
+                        status="unavailable",
+                        answer="",
+                        limitations=["The selected source is unavailable for the requested answer mode."],
+                    )
+                evidence = await run_in_threadpool(
+                    retrieval.read_evidence, factory, settings, request, snapshot, segment_ids=[]
+                )
+                return await generate_answer_result(factory, settings, request, snapshot, evidence)
+
+            snapshot, excluded = await run_in_threadpool(retrieval.read_source_availability, factory, settings, request)
+            if (
+                not snapshot.books
+                or (request.series_id is not None and snapshot.series is None)
+                or len(excluded) == len(snapshot.books)
+                or request.book_id in excluded
+            ):
+                return AskResult(
+                    status="unavailable",
+                    answer="",
+                    limitations=["The selected source is unavailable for the requested answer mode."],
+                )
+            routes: dict[tuple[str, str], list[int]] = {}
+            for book in snapshot.books:
+                if book.id in excluded:
+                    continue
+
+                if not request.query_en:
+                    return AskResult(
+                        status="unavailable",
+                        answer="",
+                        limitations=["Supply query_en for English retrieval; copy an English question unchanged."],
+                    )
+                queries = resolve_query_texts(resolve_primary_language(book.language), request.query, request.query_en)
+                for kind, query in queries.items():
+                    routes.setdefault((kind, query), []).append(book.id)
+            vectors: dict[str, list[float]] = {}
+            ranked_lists: dict[str, list[WindowMatch]] = {}
+            for (kind, query), book_ids in routes.items():
+                if query not in vectors:
+                    vectors[query] = await provider.embed_query(settings, query)
+
+                matches, unprepared = await run_in_threadpool(
+                    retrieval.search_windows,
+                    factory,
+                    settings,
+                    request,
+                    snapshot,
+                    book_ids,
+                    kind,
+                    vectors[query],
+                )
+                ranked_lists.setdefault(kind, []).extend(matches)
+                excluded.update(unprepared)
+            ranked_lists = {
+                kind: [w for w in matches if w.book_id not in excluded] for kind, matches in ranked_lists.items()
+            }
+            if request.book_id in excluded or len(excluded) == len(snapshot.books):
+                return AskResult(
+                    status="unavailable",
+                    answer="",
+                    limitations=["The selected scope has no usable prepared passage search."],
+                )
+            selected = select_segment_ids(ranked_lists, [book.id for book in snapshot.books])
+            while True:
+                try:
+                    evidence = await run_in_threadpool(
+                        retrieval.read_evidence, factory, settings, request, snapshot, selected
+                    )
+                    result = await generate_answer_result(factory, settings, request, snapshot, evidence)
+                    if excluded:
+                        result.limitations.append(
+                            "Some scoped books were excluded because passage search is not prepared."
+                        )
+                    return result
+                except provider.BookTooLargeError, retrieval.EvidenceTooLargeError:
+                    if len(selected) <= 1:
+                        raise
+                    selected = selected[: len(selected) // 2]
+    except retrieval.SourceChangedError:
         return AskResult(
-            status="oversize", answer="", limitations=["The complete book exceeds the model input budget."]
+            status="stale", answer="", limitations=["Source content or scope changed while answering; ask again."]
         )
-    except (errors.APIError, httpx.HTTPError, TimeoutError, ValueError, KeyError) as exc:
-        log_exception(logger, f"Book answer generation failed: book={request.book_id}", exc, settings=settings)
+    except provider.BookTooLargeError, retrieval.EvidenceTooLargeError:
+        return AskResult(
+            status="oversize", answer="", limitations=["The selected evidence exceeds the safe input budget."]
+        )
+    except (errors.APIError, httpx.HTTPError, TimeoutError, ValueError, KeyError, SQLAlchemyError) as exc:
+        log_exception(
+            logger, f"Library answer failed: book={request.book_id} series={request.series_id}", exc, settings=settings
+        )
         return AskResult(status="unavailable", answer="", limitations=["An answer is unavailable; please retry later."])
-    if not await run_in_threadpool(is_source_current, factory, snapshot):
-        return AskResult(status="stale", answer="", limitations=["Book content changed while answering; ask again."])
+
+
+async def generate_answer_result(
+    factory: sessionmaker[Session],
+    settings: Settings,
+    request: AskRequest,
+    snapshot: retrieval.LibrarySourceSnapshot,
+    evidence: list[EvidenceSegment],
+) -> AskResult:
+    if not evidence:
+        return AskResult(
+            status="insufficient_evidence",
+            answer="No supporting passage was found.",
+            limitations=["The retrieved evidence is limited."],
+        )
+    draft = await provider.generate_answer(settings, request.query, evidence, request.effort)
+    supplied = {segment.segment_id: segment for segment in evidence}
+    references = [
+        AnswerReference(**supplied[ref.segment_id].model_dump(), relevance=ref.relevance) for ref in draft.references
+    ]
+    if not await run_in_threadpool(retrieval.is_source_current, factory, request, snapshot):
+        raise retrieval.SourceChangedError
     return AskResult(status=draft.status, answer=draft.answer, limitations=draft.limitations, references=references)

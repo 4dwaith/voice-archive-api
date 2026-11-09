@@ -25,8 +25,13 @@ def test_book_answer_contract(openapi_document):
         {"book_id": True},
         {"book_id": "1"},
         {"query": "x" * 8001},
-        {"use_whole_book": True},
+        {"use_whole_book": "true"},
+        {"book_id": None, "use_whole_book": True},
+        {"book_id": None, "series_id": 1, "use_whole_book": True},
         {"effort": "extreme"},
+        {"series_id": 1},
+        {"book_id": None, "series_id": 0},
+        {"query_en": " "},
     ],
 )
 def test_answer_request_rejects_invalid_fields(fields):

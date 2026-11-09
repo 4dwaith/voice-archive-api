@@ -3,7 +3,7 @@ from fastapi import APIRouter, Request, Response
 from voice_archive_api.api.schemas.errors import ValidationErrorResponse
 from voice_archive_api.api.v1.books import missing_book
 from voice_archive_api.services.library.schemas import AskRequest, AskResult
-from voice_archive_api.services.library.service import ask_book
+from voice_archive_api.services.library.service import answer_library_question
 
 router = APIRouter(prefix="/library", tags=["Library"])
 
@@ -16,4 +16,4 @@ router = APIRouter(prefix="/library", tags=["Library"])
 )
 async def ask_library(payload: AskRequest, request: Request, response: Response) -> AskResult:
     response.headers["Cache-Control"] = "no-store"
-    return await ask_book(request.app.state.session_factory, request.app.state.settings, payload)
+    return await answer_library_question(request.app.state.session_factory, request.app.state.settings, payload)
