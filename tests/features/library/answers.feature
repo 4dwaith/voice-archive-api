@@ -11,6 +11,32 @@ Feature: Answer questions from prepared canonical passages
     Then the answer explains the return with its supporting passage
     And the answer service receives the question and the selected ordered passages
 
+  Scenario: Reranking uses contextual summaries and retains original neighboring passages
+    Given the journey book has prepared passage search
+    And the reranker returns valid scores
+    When I ask why the traveller returned home
+    Then the answer explains the return with its supporting passage
+    And contextual reranking preserves original answer evidence
+
+  Scenario Outline: Reranking failures preserve hybrid answering
+    Given the journey book has prepared passage search
+    And the reranker returns <failure>
+    When I ask why the traveller returned home
+    Then the answer explains the return with its supporting passage
+    And reranking failure diagnostics exclude passage content
+
+    Examples:
+      | failure        |
+      | a rejection    |
+      | invalid scores |
+      | a timeout      |
+
+  Scenario: Source changes during reranking invalidate the answer
+    Given the journey book has prepared passage search
+    And the reranker returns a source change
+    When I ask why the traveller returned home
+    Then the source change completes and I am told to ask again
+
   Scenario: The book does not establish an answer
     Given the answer service finds no evidence for the question
     When I ask why the traveller returned home

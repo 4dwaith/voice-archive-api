@@ -17,6 +17,7 @@ from voice_archive_api.db.models.windows import RetrievalWindow, WindowEmbedding
 from voice_archive_api.logic.content_validation.validation import validate_content
 from voice_archive_api.services.books.service import delete_book
 from voice_archive_api.services.content.service import publish, purge
+from voice_archive_api.services.library import service as library_service
 from voice_archive_api.services.windows import clear_book_windows, rebuild_book_windows
 
 scenarios("../features/library")
@@ -474,6 +475,79 @@ def prepare_lexical_only_passage(client, answer_case):
 @given("the question is in Kannada with English wording")
 def prepare_kannada_question(answer_case):
     answer_case["question"]["query"] = "ಪ್ರಯಾಣಿಕ ಮನೆಗೆ ಹಿಂದಿರುಗಿದ್ದು ಏಕೆ?"
+
+
+@given(parsers.parse("the reranker returns {state}"))
+def configure_reranker(client, answer_case, monkeypatch, caplog, state):
+    monkeypatch.setitem(library_service.logger.__dict__, "handlers", [caplog.handler])
+    monkeypatch.setitem(library_service.logger.__dict__, "propagate", False)
+    settings = client.app.state.settings
+    settings.reranker_base_url = "http://reranker:8000"
+    if state == "a timeout":
+        settings.reranker_timeout_seconds = 0.01
+    with client.app.state.session_factory.begin() as db:
+        target = db.get(BookSegment, answer_case["segments"][1]["id"])
+        target.summary = "Private summary clarifying the traveller's identity."
+        db.execute(
+            update(BookSegment)
+            .where(BookSegment.id == answer_case["segments"][0]["id"])
+            .values(section_id=target.section_id)
+        )
+    answer_case["rerank_requests"] = []
+    original_send = httpx.AsyncClient.send
+
+    async def route_request(http_client, request, **kwargs):
+        if request.url.host != "reranker":
+            return await original_send(http_client, request, **kwargs)
+        payload = json.loads(request.content)
+        answer_case["rerank_requests"].append(payload)
+        if state == "a rejection":
+            return httpx.Response(503, text="Private summary provider-secret", request=request)
+        if state == "a timeout":
+            await asyncio.Event().wait()
+        if state == "a source change" and not answer_case.get("changed"):
+            answer_case["change"] = "replaced"
+            await run_in_threadpool(change_source, client, answer_case)
+        results = (
+            []
+            if state == "invalid scores"
+            else [
+                {"index": index, "relevance_score": 0.9 if "ತಾಯಿಯನ್ನು" in json.loads(document)["TARGET"] else 0.1}
+                for index, document in enumerate(payload["documents"])
+            ]
+        )
+        return httpx.Response(200, json={"results": results}, request=request)
+
+    monkeypatch.setattr(httpx.AsyncClient, "send", route_request)
+
+
+@then("contextual reranking preserves original answer evidence")
+def assert_reranking_context(answer_case):
+    documents = [
+        json.loads(document) for request in answer_case["rerank_requests"] for document in request["documents"]
+    ]
+    target = next(document for document in documents if "ತಾಯಿಯನ್ನು" in document["TARGET"])
+    generated = next(request for request in answer_case["requests"] if request.url.path.endswith(":generateContent"))
+    evidence = json.loads(json.loads(generated.content)["contents"][0]["parts"][0]["text"])["BOOK"]
+    identities = [segment["segment_id"] for segment in evidence]
+
+    assert target["SUMMARY"].startswith("Private summary")
+    assert target["BEFORE"] == ["A traveller left home."]
+    assert identities[:2] == [segment["id"] for segment in answer_case["segments"]]
+    assert len(identities) == len(set(identities))
+    assert len(identities) > 25
+    assert all("summary" not in segment for segment in evidence)
+
+
+@then("reranking failure diagnostics exclude passage content")
+def assert_reranking_diagnostics(answer_case, caplog):
+    assert len(answer_case["rerank_requests"]) <= 1
+    assert any(
+        record.name == "voice_archive_api.services.library.service" and record.levelno >= 40
+        for record in caplog.records
+    )
+    assert "Private summary" not in caplog.text
+    assert "provider-secret" not in caplog.text
 
 
 @given(parsers.parse("I ask across the {scope} with an unprepared member book"))

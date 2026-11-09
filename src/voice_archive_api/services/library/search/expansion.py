@@ -2,7 +2,7 @@
 
 from dataclasses import dataclass
 
-from sqlalchemy import func, select
+from sqlalchemy import case, func, select
 from sqlalchemy.orm import Session, sessionmaker
 
 from voice_archive_api.core.config import Settings
@@ -107,8 +107,14 @@ def expand_segment_candidates(
                 func.coalesce(
                     func.sum(
                         func.octet_length(BookSegment.text_content)
-                        + func.coalesce(func.octet_length(BookSegment.summary), 0)
-                        + 1024
+                        + case(
+                            (
+                                pairs.c.target_id == pairs.c.neighbor_id,
+                                func.coalesce(func.octet_length(BookSegment.summary), 0),
+                            ),
+                            else_=0,
+                        )
+                        + 256
                     ),
                     0,
                 )

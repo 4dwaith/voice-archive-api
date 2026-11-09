@@ -29,6 +29,20 @@ The API starts at [localhost:8000](http://localhost:8000), with interactive
 [OpenAPI contract](http://localhost:8000/openapi.json). Re-run the Compose command
 after code or dependency changes; Compose does not enable hot reload.
 
+An optional external reranker is configured through `VOICE_ARCHIVE_RERANKER_BASE_URL`.
+GPU model hosting is managed separately from this application. When configured,
+passage search reranks all unique segment candidates with their summaries and
+neighboring originals before selecting up to 25 target segments. Answer evidence
+also retains their original neighbors, deduplicated in passage-group order;
+summaries are used only for reranking. Whole-book answering bypasses reranking.
+Timeout, unsupported input or invalid provider output preserves hybrid ordering
+and logs the cause. `VOICE_ARCHIVE_RERANKER_MODEL`, `_TIMEOUT_SECONDS` and
+`_MAX_INPUT_TOKENS` configure the model and bounds (defaults: Qwen3-Reranker-0.6B,
+60 seconds across expansion/scoring, and 4,096 tokens per pair). Requests are
+batched in groups of 32. A conservative UTF-8 byte bound reserves template space
+and removes whole neighboring passages, then the summary, when needed; target
+passages and questions are never truncated. No numerical relevance cutoff is used.
+
 | API                                           | Purpose                                                              |
 | --------------------------------------------- | -------------------------------------------------------------------- |
 | `/api/v1/books` and `/{id}`                   | Create, list, retrieve, update, and delete books                     |

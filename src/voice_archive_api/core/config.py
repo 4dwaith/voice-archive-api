@@ -2,7 +2,7 @@ from pathlib import Path
 from typing import Literal, Self
 from urllib.parse import urlsplit
 
-from pydantic import Field, PositiveInt, SecretStr, field_validator, model_validator
+from pydantic import AnyHttpUrl, Field, PositiveInt, SecretStr, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 from sqlalchemy.engine import URL
 
@@ -51,6 +51,10 @@ class Settings(BaseSettings):
     embedding_max_attempts: PositiveInt = 3
     gemini_answer_input_tokens: PositiveInt = 1_000_000
     gemini_answer_timeout_seconds: PositiveInt = 90
+    reranker_base_url: AnyHttpUrl | None = None
+    reranker_model: str = Field(default="Qwen/Qwen3-Reranker-0.6B", min_length=1)
+    reranker_timeout_seconds: PositiveInt = 60
+    reranker_max_input_tokens: int = Field(default=4096, ge=512)
 
     @property
     def effective_gemini_batch_api_key(self) -> SecretStr | None:

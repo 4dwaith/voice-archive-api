@@ -27,6 +27,7 @@ def test_settings_defaults() -> None:
     assert settings.upload_max_bytes is None
     assert settings.cover_max_bytes == 25 * 1024 * 1024
     assert settings.pdf_max_bytes == 1_500_000_000
+    assert settings.reranker_base_url is None
 
 
 def test_process_environment_is_loaded(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -39,6 +40,7 @@ def test_process_environment_is_loaded(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("VOICE_ARCHIVE_GEMINI_EMBEDDING_MODEL", "configured-embedding-model")
     monkeypatch.setenv("VOICE_ARCHIVE_GEMINI_EMBEDDING_DIMENSIONS", "1536")
     monkeypatch.setenv("VOICE_ARCHIVE_EMBEDDING_INPUT_FORMAT", "configured-document-format")
+    monkeypatch.setenv("VOICE_ARCHIVE_RERANKER_BASE_URL", "http://reranker:8000")
 
     settings = Settings()
 
@@ -51,6 +53,7 @@ def test_process_environment_is_loaded(monkeypatch: pytest.MonkeyPatch) -> None:
     assert settings.gemini_embedding_model == "configured-embedding-model"
     assert settings.gemini_embedding_dimensions == 1536
     assert settings.embedding_input_format == "configured-document-format"
+    assert str(settings.reranker_base_url) == "http://reranker:8000/"
 
 
 def test_dotenv_is_not_loaded(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:

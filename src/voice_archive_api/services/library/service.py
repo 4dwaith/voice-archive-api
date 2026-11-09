@@ -19,7 +19,7 @@ from voice_archive_api.logic.search.retrieval import (
 )
 from voice_archive_api.services.library import provider
 from voice_archive_api.services.library.schemas import AnswerReference, AskRequest, AskResult
-from voice_archive_api.services.library.search import retrieval
+from voice_archive_api.services.library.search import expansion, reranking, retrieval
 
 logger = logging.getLogger(__name__)
 
@@ -86,11 +86,45 @@ async def answer_library_question(factory: sessionmaker[Session], settings: Sett
             book_ids = [book.id for book in snapshot.books]
             ranked_windows = fuse_window_rankings(ranked_lists, book_ids)
             candidates = extract_segment_candidates(ranked_windows, book_ids)
+            context_ids: dict[int, list[int]] = {}
+            if settings.reranker_base_url is not None and candidates:
+                try:
+                    async with asyncio.timeout(settings.reranker_timeout_seconds):
+                        expanded = await run_in_threadpool(
+                            expansion.expand_segment_candidates, factory, settings, request, snapshot, candidates
+                        )
+                        reranked = await reranking.rerank_segment_candidates(settings, request.query, expanded)
+                    candidates = reranked
+                    context_ids = {
+                        item.candidate.segment_id: [
+                            segment.segment_id
+                            for segment in (*item.preceding_segments, item.evidence, *item.following_segments)
+                        ]
+                        for item in expanded
+                    }
+                except retrieval.SourceChangedError:
+                    raise
+                except (httpx.HTTPError, TimeoutError, ValueError) as exc:
+                    log_exception(
+                        logger,
+                        f"Reranking failed; using hybrid ordering: book={request.book_id} series={request.series_id}",
+                        exc,
+                        settings=settings,
+                    )
             selected = select_segment_ids(candidates)
             while True:
                 try:
                     evidence = await run_in_threadpool(
-                        retrieval.read_evidence, factory, settings, request, snapshot, selected
+                        retrieval.read_evidence,
+                        factory,
+                        settings,
+                        request,
+                        snapshot,
+                        list(
+                            dict.fromkeys(
+                                identity for target in selected for identity in context_ids.get(target, [target])
+                            )
+                        ),
                     )
                     result = await generate_answer_result(factory, settings, request, snapshot, evidence)
                     if excluded:
