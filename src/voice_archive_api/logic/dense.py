@@ -18,6 +18,21 @@ class WindowMatch:
     distance: float
 
 
+@dataclass(frozen=True)
+class RankedWindow:
+    window: WindowMatch
+    score: float
+
+
+@dataclass(frozen=True)
+class SegmentCandidate:
+    segment_id: int
+    book_id: int
+    window_ids: tuple[UUID, ...]
+    score: float
+    source_order: tuple[int, int, int]
+
+
 def resolve_query_texts(language: str, query: str, query_en: str) -> dict[str, str]:
     return {"primary": query_en} if language == "en" else {"primary": query, "translated": query_en}
 
@@ -31,7 +46,8 @@ def validate_query_vector(vector: list[float], dimensions: int) -> None:
         raise ValueError("Invalid query embedding dimensions, values or magnitude")
 
 
-def select_segment_ids(ranked_lists: dict[str, list[WindowMatch]], book_ids: list[int]) -> list[int]:
+def fuse_window_rankings(ranked_lists: dict[str, list[WindowMatch]], book_ids: list[int]) -> list[RankedWindow]:
+    """Combine channel votes without expanding or truncating the candidate pool."""
     book_order = {book_id: index for index, book_id in enumerate(book_ids)}
     scores: dict[UUID, float] = {}
     windows: dict[UUID, WindowMatch] = {}
@@ -47,15 +63,38 @@ def select_segment_ids(ranked_lists: dict[str, list[WindowMatch]], book_ids: lis
             windows[window.id] = window
             scores[window.id] = scores.get(window.id, 0) + 1 / (RRF_CONSTANT + rank)
 
-    segment_scores: dict[int, float] = {}
-    source_order: dict[int, tuple[int, int, int]] = {}
+    return sorted(
+        [RankedWindow(window, scores[window.id]) for window in windows.values()],
+        key=lambda ranked: (-ranked.score, book_order[ranked.window.book_id], ranked.window.sequence),
+    )
 
-    for window in windows.values():
+
+def expand_segment_candidates(ranked_windows: list[RankedWindow], book_ids: list[int]) -> list[SegmentCandidate]:
+    """Deduplicate segments, retaining provenance and the strongest window score."""
+    book_order = {book_id: index for index, book_id in enumerate(book_ids)}
+    candidates: dict[int, SegmentCandidate] = {}
+
+    for ranked in ranked_windows:
+        window = ranked.window
         for position, segment_id in enumerate(window.segment_ids):
-            segment_scores[segment_id] = max(segment_scores.get(segment_id, 0), scores[window.id])
+            previous = candidates.get(segment_id)
             order = (book_order[window.book_id], window.sequence, position)
-            source_order[segment_id] = min(source_order.get(segment_id, order), order)
+            candidates[segment_id] = SegmentCandidate(
+                segment_id=segment_id,
+                book_id=window.book_id,
+                window_ids=(*previous.window_ids, window.id) if previous else (window.id,),
+                score=max(previous.score, ranked.score) if previous else ranked.score,
+                source_order=min(previous.source_order, order) if previous else order,
+            )
 
-    return sorted(segment_scores, key=lambda identity: (-segment_scores[identity], source_order[identity]))[
-        :SEGMENT_TARGET
+    return list(candidates.values())
+
+
+def select_segment_ids(candidates: list[SegmentCandidate], *, limit: int = SEGMENT_TARGET) -> list[int]:
+    """Apply the final evidence cap after candidate ranking stages have completed."""
+    if limit < 0:
+        raise ValueError("Segment limit must be nonnegative")
+    return [
+        candidate.segment_id
+        for candidate in sorted(candidates, key=lambda candidate: (-candidate.score, candidate.source_order))[:limit]
     ]

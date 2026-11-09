@@ -10,7 +10,12 @@ from starlette.concurrency import run_in_threadpool
 from voice_archive_api.core.config import Settings
 from voice_archive_api.core.logging import log_exception
 from voice_archive_api.logic.books.validation import resolve_primary_language
-from voice_archive_api.logic.dense import resolve_query_texts, select_segment_ids
+from voice_archive_api.logic.dense import (
+    expand_segment_candidates,
+    fuse_window_rankings,
+    resolve_query_texts,
+    select_segment_ids,
+)
 from voice_archive_api.logic.library import EvidenceSegment
 from voice_archive_api.services.library import provider, retrieval
 from voice_archive_api.services.library.schemas import AnswerReference, AskRequest, AskResult
@@ -77,7 +82,10 @@ async def answer_library_question(factory: sessionmaker[Session], settings: Sett
                     answer="",
                     limitations=["The selected scope has no usable prepared passage search."],
                 )
-            selected = select_segment_ids(ranked_lists, [book.id for book in snapshot.books])
+            book_ids = [book.id for book in snapshot.books]
+            ranked_windows = fuse_window_rankings(ranked_lists, book_ids)
+            candidates = expand_segment_candidates(ranked_windows, book_ids)
+            selected = select_segment_ids(candidates)
             while True:
                 try:
                     evidence = await run_in_threadpool(
