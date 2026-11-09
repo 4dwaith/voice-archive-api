@@ -444,7 +444,31 @@ def prepare_passage_search(client, answer_case):
 def declare_english_book(client, answer_case):
     response = client.patch(f"/api/v1/books/{answer_case['book_id']}", json={"language": "en-US"})
     assert response.status_code == 200, response.text
+    with client.app.state.session_factory.begin() as db:
+        db.execute(
+            update(RetrievalWindow)
+            .where(RetrievalWindow.book_id == answer_case["book_id"])
+            .values(translated_text=None)
+        )
     answer_case["english_book"] = True
+
+
+@given("only lexical search can find the supporting passage")
+def prepare_lexical_only_passage(client, answer_case):
+    supporting_id = answer_case["segments"][1]["id"]
+    original_ids = {segment["id"] for segment in answer_case["segments"]}
+    with client.app.state.session_factory.begin() as db:
+        source = "The traveller returned home to see his mother."
+        db.execute(update(BookSegment).where(BookSegment.id == supporting_id).values(text_content=source))
+        db.execute(
+            update(RetrievalWindow)
+            .where(RetrievalWindow.segment_ids.contains([supporting_id]))
+            .values(primary_text=source)
+        )
+        db.execute(update(WindowEmbedding).values(vector=[1.0, 0.0]))
+        originals = select(RetrievalWindow.id).where(RetrievalWindow.segment_ids.overlap(list(original_ids)))
+        db.execute(update(WindowEmbedding).where(WindowEmbedding.window_id.in_(originals)).values(vector=[0.0, 1.0]))
+    answer_case["question"]["lexical_terms"] = ["travellers returning home"]
 
 
 @given("the question is in Kannada with English wording")

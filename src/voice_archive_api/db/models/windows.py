@@ -3,8 +3,20 @@
 from uuid import UUID
 
 from pgvector.sqlalchemy import VECTOR
-from sqlalchemy import BigInteger, CheckConstraint, ForeignKey, Integer, String, Text, UniqueConstraint, Uuid
-from sqlalchemy.dialects.postgresql import ARRAY
+from sqlalchemy import (
+    BigInteger,
+    CheckConstraint,
+    Computed,
+    ForeignKey,
+    Index,
+    Integer,
+    String,
+    Text,
+    UniqueConstraint,
+    Uuid,
+    text,
+)
+from sqlalchemy.dialects.postgresql import ARRAY, TSVECTOR
 from sqlalchemy.orm import Mapped, mapped_column
 
 from voice_archive_api.db.base import Base
@@ -12,7 +24,22 @@ from voice_archive_api.db.base import Base
 
 class RetrievalWindow(Base):
     __tablename__ = "retrieval_windows"
-    __table_args__ = (UniqueConstraint("book_id", "sequence", name="uq_retrieval_windows_book_sequence"),)
+    __table_args__ = (
+        UniqueConstraint("book_id", "sequence", name="uq_retrieval_windows_book_sequence"),
+        Index(
+            "ix_retrieval_windows_english",
+            "english_vector",
+            postgresql_using="gin",
+            postgresql_where=text("translated_text IS NULL"),
+        ),
+        Index(
+            "ix_retrieval_windows_trigrams",
+            "trigram_text",
+            postgresql_using="gin",
+            postgresql_ops={"trigram_text": "gin_trgm_ops"},
+            postgresql_where=text("translated_text IS NOT NULL"),
+        ),
+    )
 
     id: Mapped[UUID] = mapped_column(Uuid, primary_key=True)
     book_id: Mapped[int] = mapped_column(BigInteger, ForeignKey("books.id", ondelete="CASCADE"))
@@ -23,6 +50,16 @@ class RetrievalWindow(Base):
     path: Mapped[str] = mapped_column(Text)
     primary_text: Mapped[str] = mapped_column(Text)
     translated_text: Mapped[str | None] = mapped_column(Text)
+
+    english_vector: Mapped[str | None] = mapped_column(
+        TSVECTOR,
+        Computed(
+            "CASE WHEN translated_text IS NULL THEN to_tsvector('english'::regconfig, primary_text) END", persisted=True
+        ),
+    )
+    trigram_text: Mapped[str | None] = mapped_column(
+        Text, Computed("CASE WHEN translated_text IS NOT NULL THEN normalize(primary_text, NFC) END", persisted=True)
+    )
 
 
 class WindowEmbedding(Base):

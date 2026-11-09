@@ -32,6 +32,12 @@ def test_book_answer_contract(openapi_document):
         {"series_id": 1},
         {"book_id": None, "series_id": 0},
         {"query_en": " "},
+        {"lexical_terms": []},
+        {"lexical_terms": [" "]},
+        {"lexical_terms": ["x" * 201]},
+        {"lexical_terms": ["name"] * 9},
+        {"lexical_terms": "name"},
+        {"lexical_terms": [123]},
     ],
 )
 def test_answer_request_rejects_invalid_fields(fields):

@@ -171,6 +171,13 @@ Feature: Answer questions from prepared canonical passages
     Then I am told that an answer is temporarily unavailable
     And no canonical source or answer generation is loaded
 
+  Scenario: Hybrid answering recovers a passage outside dense candidates
+    Given the journey book has prepared passage search
+    And the journey book is declared English
+    And only lexical search can find the supporting passage
+    When I ask why the traveller returned home
+    Then only selected canonical passages are read and supplied
+
   Scenario: English retrieval requires explicit English question wording
     Given the journey book has prepared passage search
     And the English wording of the question is missing

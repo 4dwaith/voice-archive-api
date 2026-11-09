@@ -10,7 +10,7 @@ from starlette.concurrency import run_in_threadpool
 from voice_archive_api.core.config import Settings
 from voice_archive_api.core.logging import log_exception
 from voice_archive_api.logic.books.validation import resolve_primary_language
-from voice_archive_api.logic.dense import WindowMatch, resolve_query_texts, select_segment_ids
+from voice_archive_api.logic.dense import resolve_query_texts, select_segment_ids
 from voice_archive_api.logic.library import EvidenceSegment
 from voice_archive_api.services.library import provider, retrieval
 from voice_archive_api.services.library.schemas import AnswerReference, AskRequest, AskResult
@@ -63,26 +63,14 @@ async def answer_library_question(factory: sessionmaker[Session], settings: Sett
                 for kind, query in queries.items():
                     routes.setdefault((kind, query), []).append(book.id)
             vectors: dict[str, list[float]] = {}
-            ranked_lists: dict[str, list[WindowMatch]] = {}
-            for (kind, query), book_ids in routes.items():
+            for _, query in routes:
                 if query not in vectors:
                     vectors[query] = await provider.embed_query(settings, query)
 
-                matches, unprepared = await run_in_threadpool(
-                    retrieval.search_windows,
-                    factory,
-                    settings,
-                    request,
-                    snapshot,
-                    book_ids,
-                    kind,
-                    vectors[query],
-                )
-                ranked_lists.setdefault(kind, []).extend(matches)
-                excluded.update(unprepared)
-            ranked_lists = {
-                kind: [w for w in matches if w.book_id not in excluded] for kind, matches in ranked_lists.items()
-            }
+            ranked_lists, unprepared = await run_in_threadpool(
+                retrieval.search_windows, factory, settings, request, snapshot, routes, vectors
+            )
+            excluded.update(unprepared)
             if request.book_id in excluded or len(excluded) == len(snapshot.books):
                 return AskResult(
                     status="unavailable",

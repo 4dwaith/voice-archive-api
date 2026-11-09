@@ -1,4 +1,4 @@
-from typing import Literal
+from typing import Annotated, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
@@ -10,6 +10,9 @@ class AskRequest(BaseModel):
 
     query: str = Field(min_length=1, max_length=8000, pattern=r"\S")
     query_en: str | None = Field(default=None, min_length=1, max_length=8000, pattern=r"\S")
+    lexical_terms: list[Annotated[str, Field(min_length=1, max_length=200, pattern=r"\S")]] | None = Field(
+        default=None, min_length=1, max_length=8
+    )
     book_id: int | None = Field(default=None, gt=0, le=9_223_372_036_854_775_807)
     series_id: int | None = Field(default=None, gt=0, le=9_223_372_036_854_775_807)
     use_whole_book: bool = False

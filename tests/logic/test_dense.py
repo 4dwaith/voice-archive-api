@@ -14,6 +14,17 @@ def test_duplicate_channel_entries_do_not_add_votes_or_shift_ranks():
     assert selected == [2, 1]
 
 
+def test_lexical_votes_join_individual_dense_lists():
+    first = WindowMatch(uuid4(), 1, 0, [1], 0.1)
+    recovered = WindowMatch(uuid4(), 1, 1, [2], -0.9)
+
+    selected = select_segment_ids(
+        {"primary": [first], "translated": [recovered, first], "lexical": [recovered, recovered]}, [1]
+    )
+
+    assert selected == [2, 1]
+
+
 def test_overlapping_segments_receive_only_their_strongest_window_score():
     first = WindowMatch(uuid4(), 1, 0, [3], 0.1)
     second = WindowMatch(uuid4(), 1, 1, [2], 0.2)

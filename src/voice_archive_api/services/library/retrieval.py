@@ -15,6 +15,7 @@ from voice_archive_api.logic.books.validation import resolve_primary_language
 from voice_archive_api.logic.dense import CANDIDATE_LIMIT, WindowMatch
 from voice_archive_api.logic.library import EvidenceSegment
 from voice_archive_api.services.books.service import BookNotFound
+from voice_archive_api.services.library.lexical import search_lexical_windows
 from voice_archive_api.services.library.schemas import AskRequest
 
 MAX_EVIDENCE_BYTES = 8_000_000
@@ -155,42 +156,66 @@ def search_windows(
     settings: Settings,
     request: AskRequest,
     snapshot: LibrarySourceSnapshot,
-    book_ids: list[int],
-    kind: str,
-    vector: list[float],
-) -> tuple[list[WindowMatch], set[int]]:
+    routes: dict[tuple[str, str], list[int]],
+    vectors: dict[str, list[float]],
+) -> tuple[dict[str, list[WindowMatch]], set[int]]:
     with factory.begin() as db:
         db.connection(execution_options={"isolation_level": "REPEATABLE READ"})
         require_current_source(db, request, snapshot)
-        requested_ids = set(book_ids)
-        unprepared = find_unprepared_book_ids(
-            db, settings, [book for book in snapshot.books if book.id in requested_ids]
+        unprepared = find_unprepared_book_ids(db, settings, snapshot.books)
+        ranked_lists: dict[str, list[WindowMatch]] = {}
+        for (kind, query), book_ids in routes.items():
+            eligible = [book_id for book_id in book_ids if book_id not in unprepared]
+            ranked_lists.setdefault(kind, []).extend(search_dense_windows(db, settings, eligible, kind, vectors[query]))
+        for is_english in (True, False):
+            eligible = [
+                book.id
+                for book in snapshot.books
+                if book.id not in unprepared and (resolve_primary_language(book.language) == "en") == is_english
+            ]
+            if eligible:
+                ranked_lists[f"lexical_{is_english}"] = search_lexical_windows(
+                    db,
+                    eligible,
+                    is_english,
+                    (request.query_en or "") if is_english else request.query,
+                    request.lexical_terms,
+                )
+        return ranked_lists, unprepared
+
+
+def search_dense_windows(
+    db: Session,
+    settings: Settings,
+    book_ids: list[int],
+    kind: str,
+    vector: list[float],
+) -> list[WindowMatch]:
+    distance = WindowEmbedding.vector.cosine_distance(vector)
+    rows = db.execute(
+        select(
+            RetrievalWindow.id,
+            RetrievalWindow.book_id,
+            RetrievalWindow.sequence,
+            RetrievalWindow.segment_ids,
+            distance.label("distance"),
         )
-        distance = WindowEmbedding.vector.cosine_distance(vector)
-        rows = db.execute(
-            select(
-                RetrievalWindow.id,
-                RetrievalWindow.book_id,
-                RetrievalWindow.sequence,
-                RetrievalWindow.segment_ids,
-                distance.label("distance"),
-            )
-            .join(WindowEmbedding)
-            .join(Book, Book.id == RetrievalWindow.book_id)
-            .where(
-                RetrievalWindow.book_id.in_(set(book_ids) - unprepared),
-                RetrievalWindow.content_version == Book.content_version,
-                WindowEmbedding.kind == kind,
-                WindowEmbedding.model == settings.gemini_embedding_model,
-                WindowEmbedding.dimensions == settings.gemini_embedding_dimensions,
-                WindowEmbedding.input_format == settings.embedding_input_format,
-                WindowEmbedding.vector.is_not(None),
-                func.vector_norm(WindowEmbedding.vector) > 0,
-            )
-            .order_by(distance, Book.series_id, Book.series_index, Book.id, RetrievalWindow.sequence)
-            .limit(CANDIDATE_LIMIT)
+        .join(WindowEmbedding)
+        .join(Book, Book.id == RetrievalWindow.book_id)
+        .where(
+            RetrievalWindow.book_id.in_(book_ids),
+            RetrievalWindow.content_version == Book.content_version,
+            WindowEmbedding.kind == kind,
+            WindowEmbedding.model == settings.gemini_embedding_model,
+            WindowEmbedding.dimensions == settings.gemini_embedding_dimensions,
+            WindowEmbedding.input_format == settings.embedding_input_format,
+            WindowEmbedding.vector.is_not(None),
+            func.vector_norm(WindowEmbedding.vector) > 0,
         )
-        return [WindowMatch(**row._mapping) for row in rows], unprepared
+        .order_by(distance, Book.series_id, Book.series_index, Book.id, RetrievalWindow.sequence)
+        .limit(CANDIDATE_LIMIT)
+    )
+    return [WindowMatch(**row._mapping) for row in rows]
 
 
 def require_evidence_size(
