@@ -6,6 +6,15 @@ database access, transactions, file preparation, and coordination with pure logi
 SQLAlchemy models live in `db/models/`; implementation-independent rules and types
 live in `logic/`. HTTP routes and local commands call services directly.
 
+`library/search/` groups passage retrieval: `dense.py` owns exact vector queries,
+`lexical.py` owns full-text/trigram queries, `retrieval.py` coordinates search
+channels and source/evidence reads, and `expansion.py` loads candidate text,
+summaries and neighboring context. Pure ranking rules live in `logic/search/`.
+The library's `service.py` orchestrates question answering and `provider.py`
+owns model calls. Tests mirror search responsibilities under `tests/logic/search/`,
+`tests/services/library/search/` and `tests/database/search/` for PostgreSQL-specific
+dictionary/index behavior.
+
 `services/embeddings/` groups batch embedding operations. `submit_batches.py` owns
 queue admission, input selection and provider submission; `collect_results.py`
 polls provider jobs, reconciles interrupted submissions and publishes vectors.

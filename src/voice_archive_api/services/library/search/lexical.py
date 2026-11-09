@@ -1,4 +1,4 @@
-"""Rank original window text inside the dense search's eligible snapshot."""
+"""Rank original window text within the eligible source snapshot."""
 
 import unicodedata
 
@@ -7,7 +7,7 @@ from sqlalchemy.orm import Session
 
 from voice_archive_api.db.models.book import Book
 from voice_archive_api.db.models.windows import RetrievalWindow
-from voice_archive_api.logic.dense import CANDIDATE_LIMIT, WindowMatch
+from voice_archive_api.logic.search.retrieval import CANDIDATE_LIMIT, WindowMatch
 
 
 def search_lexical_windows(

@@ -9,7 +9,6 @@ from google.genai import types
 from pydantic import BaseModel, SecretStr
 
 from voice_archive_api.core.config import Settings
-from voice_archive_api.logic.dense import validate_query_vector
 from voice_archive_api.logic.library import (
     ANSWER_INSTRUCTIONS,
     AnswerDraft,
@@ -17,6 +16,7 @@ from voice_archive_api.logic.library import (
     format_book_evidence,
     format_question,
 )
+from voice_archive_api.logic.search.dense import validate_query_vector
 
 logger = logging.getLogger(__name__)
 

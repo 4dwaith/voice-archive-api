@@ -8,7 +8,7 @@ from sqlalchemy import delete, select, text
 
 from alembic import command
 from voice_archive_api.db.models.windows import RetrievalWindow
-from voice_archive_api.services.library.lexical import search_lexical_windows
+from voice_archive_api.services.library.search.lexical import search_lexical_windows
 
 
 @pytest.mark.parametrize(

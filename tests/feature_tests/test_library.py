@@ -625,7 +625,9 @@ def request_whole_book(answer_case, monkeypatch):
     def reject_dense_retrieval(*args, **kwargs):
         pytest.fail("Whole-book requests must bypass dense preparation and selection")
 
-    monkeypatch.setattr("voice_archive_api.services.library.retrieval.read_source_availability", reject_dense_retrieval)
+    monkeypatch.setattr(
+        "voice_archive_api.services.library.search.retrieval.read_source_availability", reject_dense_retrieval
+    )
     monkeypatch.setattr("voice_archive_api.services.library.service.select_segment_ids", reject_dense_retrieval)
 
 

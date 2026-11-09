@@ -10,15 +10,16 @@ from starlette.concurrency import run_in_threadpool
 from voice_archive_api.core.config import Settings
 from voice_archive_api.core.logging import log_exception
 from voice_archive_api.logic.books.validation import resolve_primary_language
-from voice_archive_api.logic.dense import (
-    expand_segment_candidates,
+from voice_archive_api.logic.library import EvidenceSegment
+from voice_archive_api.logic.search.dense import resolve_query_texts
+from voice_archive_api.logic.search.retrieval import (
+    extract_segment_candidates,
     fuse_window_rankings,
-    resolve_query_texts,
     select_segment_ids,
 )
-from voice_archive_api.logic.library import EvidenceSegment
-from voice_archive_api.services.library import provider, retrieval
+from voice_archive_api.services.library import provider
 from voice_archive_api.services.library.schemas import AnswerReference, AskRequest, AskResult
+from voice_archive_api.services.library.search import retrieval
 
 logger = logging.getLogger(__name__)
 
@@ -84,7 +85,7 @@ async def answer_library_question(factory: sessionmaker[Session], settings: Sett
                 )
             book_ids = [book.id for book in snapshot.books]
             ranked_windows = fuse_window_rankings(ranked_lists, book_ids)
-            candidates = expand_segment_candidates(ranked_windows, book_ids)
+            candidates = extract_segment_candidates(ranked_windows, book_ids)
             selected = select_segment_ids(candidates)
             while True:
                 try:

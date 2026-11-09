@@ -10,6 +10,8 @@ validation libraries such as Pydantic, html5lib, and langcodes are permitted.
   media-reference validation, and closed section/segment kinds. The guide, generated
   JSON Schema, and complete synthetic example stay alongside the module.
 - `files.py`: file kinds and immutable prepared-asset snapshot contracts.
+- `search/`: dense query routing/vector validation in `dense.py`; shared candidate
+  types, reciprocal rank fusion, extraction and selection in `retrieval.py`.
 
 Services perform I/O and supply its results to these functions. In particular,
 `referenced_file_ids()` identifies the files to load; services load/lock their

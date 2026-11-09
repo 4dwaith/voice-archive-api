@@ -1,6 +1,5 @@
-"""Fuse bounded database search results; never receive or compare stored vectors."""
+"""Shared search candidates, rank fusion and final segment selection."""
 
-import math
 from dataclasses import dataclass
 from uuid import UUID
 
@@ -33,19 +32,6 @@ class SegmentCandidate:
     source_order: tuple[int, int, int]
 
 
-def resolve_query_texts(language: str, query: str, query_en: str) -> dict[str, str]:
-    return {"primary": query_en} if language == "en" else {"primary": query, "translated": query_en}
-
-
-def validate_query_vector(vector: list[float], dimensions: int) -> None:
-    if (
-        len(vector) != dimensions
-        or not all(math.isfinite(value) for value in vector)
-        or not 0 < math.hypot(*vector) < math.inf
-    ):
-        raise ValueError("Invalid query embedding dimensions, values or magnitude")
-
-
 def fuse_window_rankings(ranked_lists: dict[str, list[WindowMatch]], book_ids: list[int]) -> list[RankedWindow]:
     """Combine channel votes without expanding or truncating the candidate pool."""
     book_order = {book_id: index for index, book_id in enumerate(book_ids)}
@@ -69,7 +55,7 @@ def fuse_window_rankings(ranked_lists: dict[str, list[WindowMatch]], book_ids: l
     )
 
 
-def expand_segment_candidates(ranked_windows: list[RankedWindow], book_ids: list[int]) -> list[SegmentCandidate]:
+def extract_segment_candidates(ranked_windows: list[RankedWindow], book_ids: list[int]) -> list[SegmentCandidate]:
     """Deduplicate segments, retaining provenance and the strongest window score."""
     book_order = {book_id: index for index, book_id in enumerate(book_ids)}
     candidates: dict[int, SegmentCandidate] = {}

@@ -3,19 +3,17 @@ from uuid import uuid4
 
 import pytest
 
-from voice_archive_api.logic.dense import (
+from voice_archive_api.logic.search.retrieval import (
     WindowMatch,
-    expand_segment_candidates,
+    extract_segment_candidates,
     fuse_window_rankings,
-    resolve_query_texts,
     select_segment_ids,
-    validate_query_vector,
 )
 
 
 def select_from_ranked_lists(ranked_lists, book_ids):
     ranked_windows = fuse_window_rankings(ranked_lists, book_ids)
-    candidates = expand_segment_candidates(ranked_windows, book_ids)
+    candidates = extract_segment_candidates(ranked_windows, book_ids)
 
     return select_segment_ids(candidates)
 
@@ -60,25 +58,12 @@ def test_scope_relevance_precedes_book_order_and_reading_order_breaks_ties():
     assert selected == [2, 3, 4, 1]
 
 
-@pytest.mark.parametrize(
-    "language, expected", [("en", {"primary": "Why?"}), ("kn", {"primary": "ಏಕೆ?", "translated": "Why?"})]
-)
-def test_query_language_follows_the_representation(language, expected):
-    assert resolve_query_texts(language, "ಏಕೆ?", "Why?") == expected
-
-
-@pytest.mark.parametrize("vector", [[0.0, 0.0], [1.0], [float("nan"), 1.0], [float("inf"), 1.0]])
-def test_invalid_query_vectors_are_rejected(vector):
-    with pytest.raises(ValueError):
-        validate_query_vector(vector, 2)
-
-
 def test_candidate_stages_preserve_all_segments_and_window_provenance_before_selection():
     first = WindowMatch(uuid4(), 1, 0, list(range(30)), 0.1)
     second = WindowMatch(uuid4(), 1, 1, [29, 30], 0.2)
 
     ranked_windows = fuse_window_rankings({"primary": [second, first, first]}, [1])
-    candidates = expand_segment_candidates(ranked_windows, [1])
+    candidates = extract_segment_candidates(ranked_windows, [1])
     overlap = next(candidate for candidate in candidates if candidate.segment_id == 29)
 
     assert [ranked.window.id for ranked in ranked_windows] == [first.id, second.id]
@@ -97,7 +82,7 @@ def test_candidate_stages_preserve_all_segments_and_window_provenance_before_sel
 
 def test_final_selection_consumes_updated_candidate_scores():
     window = WindowMatch(uuid4(), 1, 0, [1, 2], 0.1)
-    candidates = expand_segment_candidates(fuse_window_rankings({"primary": [window]}, [1]), [1])
+    candidates = extract_segment_candidates(fuse_window_rankings({"primary": [window]}, [1]), [1])
     reranked = [replace(candidate, score=float(candidate.segment_id)) for candidate in candidates]
 
     selected = select_segment_ids(reranked, limit=1)
@@ -107,9 +92,9 @@ def test_final_selection_consumes_updated_candidate_scores():
 
 def test_empty_candidate_pool_and_zero_selection_limit():
     ranked_windows = fuse_window_rankings({}, [1])
-    candidates = expand_segment_candidates(ranked_windows, [1])
+    candidates = extract_segment_candidates(ranked_windows, [1])
     window = WindowMatch(uuid4(), 1, 0, [1], 0.1)
-    populated = expand_segment_candidates(fuse_window_rankings({"primary": [window]}, [1]), [1])
+    populated = extract_segment_candidates(fuse_window_rankings({"primary": [window]}, [1]), [1])
 
     assert ranked_windows == []
     assert candidates == []
