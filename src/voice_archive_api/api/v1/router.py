@@ -8,6 +8,8 @@ from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 
 from voice_archive_api.api.schemas.health import HealthResponse, NotReadyResponse
+from voice_archive_api.api.v1.auth import authorize_api_request
+from voice_archive_api.api.v1.auth import router as auth_router
 from voice_archive_api.api.v1.books import router as books_router
 from voice_archive_api.api.v1.content import router as content_router
 from voice_archive_api.api.v1.files import router as files_router
@@ -20,12 +22,9 @@ from voice_archive_api.db.session import get_db
 logger = logging.getLogger(__name__)
 
 router = APIRouter()
-router.include_router(books_router)
-router.include_router(series_router)
-router.include_router(content_router)
-router.include_router(files_router)
-router.include_router(live_router)
-router.include_router(library_router)
+router.include_router(auth_router)
+for protected_router in (books_router, series_router, content_router, files_router, live_router, library_router):
+    router.include_router(protected_router, dependencies=[Depends(authorize_api_request)])
 
 
 @router.get(

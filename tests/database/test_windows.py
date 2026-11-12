@@ -131,7 +131,7 @@ def test_an_earlier_transaction_cannot_hide_a_submission_from_retry_counts(windo
     with factory.begin() as db:
         transaction_started = db.scalar(select(func.now()))
         enqueue_book_embeddings(factory, book_id)
-        claim_factory = sessionmaker(bind=db.connection())
+        claim_factory = sessionmaker(bind=db.connection(), info=db.info)
 
         batch_id, _, _, _, _ = create_embedding_batch_request_input(claim_factory, settings, len)
 

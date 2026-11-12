@@ -13,6 +13,7 @@ from voice_archive_api.core.config import Settings
 from voice_archive_api.core.errors import ApplicationError
 from voice_archive_api.core.logging import log_exception
 from voice_archive_api.db.session import create_database_engine, create_session_factory
+from voice_archive_api.services.access import AccessContext
 from voice_archive_api.services.windows import clear_book_windows, rebuild_book_windows
 
 logger = logging.getLogger(__name__)
@@ -40,7 +41,7 @@ def run(argv: list[str] | None = None) -> int:
         engine = create_database_engine(settings.database_url)
 
         try:
-            factory = create_session_factory(engine)
+            factory = create_session_factory(engine, access=AccessContext(user_id=None, is_trusted=True))
             result: dict[str, object] = {"book_id": args.book_id}
             if args.operation == "clear":
                 clear_book_windows(factory, args.book_id)

@@ -6,14 +6,16 @@ from uuid import uuid4
 import pytest
 from sqlalchemy import delete, select, text, update
 from sqlalchemy.exc import IntegrityError
-from sqlalchemy.orm import Session, sessionmaker
+from sqlalchemy.orm import sessionmaker
 
 from alembic import command
 from tests.database.content_helpers import add_audio, add_section
+from tests.database.session_helpers import create_trusted_session
 from voice_archive_api.db.models.book import Book
 from voice_archive_api.db.models.content import BookSection
 from voice_archive_api.db.models.file import FileCleanupProgress, PendingFileDeletion, StoredFile
 from voice_archive_api.logic.files import FileKind
+from voice_archive_api.services.access import AccessContext
 from voice_archive_api.services.books import service as book_service
 from voice_archive_api.services.books.schemas import BookCreate
 from voice_archive_api.services.files.cleanup import queue_expired_files
@@ -51,7 +53,7 @@ def add_file(db, *, key="file", kind=FileKind.COVER, book_id=None):
 
 
 def test_direct_writes_maintain_unlink_timestamps(test_engine):
-    with Session(test_engine) as db:
+    with create_trusted_session(test_engine) as db:
         book = add_book(db)
         record = add_file(db)
         db.refresh(record)
@@ -74,14 +76,14 @@ def test_direct_writes_maintain_unlink_timestamps(test_engine):
 
 
 def test_insert_with_owner_has_no_unlinked_timestamp(test_engine):
-    with Session(test_engine) as db:
+    with create_trusted_session(test_engine) as db:
         record = add_file(db, book_id=add_book(db).id)
         db.refresh(record)
         assert record.unlinked_at is None
 
 
 def test_database_rejects_duplicate_kind_for_book(test_engine):
-    with Session(test_engine) as db:
+    with create_trusted_session(test_engine) as db:
         book = add_book(db)
         add_file(db, book_id=book.id)
         add_file(db, key="pdf", kind=FileKind.SOURCE_PDF, book_id=book.id)
@@ -91,27 +93,27 @@ def test_database_rejects_duplicate_kind_for_book(test_engine):
 
 
 def test_multiple_unattached_files_of_same_kind_are_allowed(test_engine):
-    with Session(test_engine) as db:
+    with create_trusted_session(test_engine) as db:
         add_file(db)
         add_file(db, key="second")
         db.commit()
 
 
 def test_database_rejects_nonexistent_owner(test_engine):
-    with Session(test_engine) as db, pytest.raises(IntegrityError) as raised:
+    with create_trusted_session(test_engine) as db, pytest.raises(IntegrityError) as raised:
         add_file(db, book_id=12345)
     assert raised.value.orig.diag.constraint_name == "fk_files_book_id_books"
 
 
 def test_database_rejects_unlinked_file_without_timestamp(test_engine):
-    with Session(test_engine) as db:
+    with create_trusted_session(test_engine) as db:
         record = add_file(db)
         with pytest.raises(IntegrityError):
             db.execute(update(StoredFile).where(StoredFile.id == record.id).values(unlinked_at=None))
 
 
 def test_direct_deletion_succeeds_after_explicit_detachment(test_engine):
-    with Session(test_engine) as db:
+    with create_trusted_session(test_engine) as db:
         record = add_file(db, book_id=add_book(db).id)
         file_id = record.id
         db.commit()
@@ -122,7 +124,7 @@ def test_direct_deletion_succeeds_after_explicit_detachment(test_engine):
 
 
 def test_bulk_delete_rejection_preserves_both_linked_and_unlinked_files(test_engine):
-    with Session(test_engine) as db:
+    with create_trusted_session(test_engine) as db:
         unlinked = add_file(db)
         linked = add_file(db, key="linked", book_id=add_book(db).id)
         file_ids = (unlinked.id, linked.id)
@@ -134,7 +136,7 @@ def test_bulk_delete_rejection_preserves_both_linked_and_unlinked_files(test_eng
 
 
 def test_book_deletion_refreshes_cached_file_ownership_before_detaching(test_engine):
-    with Session(test_engine, expire_on_commit=False) as db:
+    with create_trusted_session(test_engine, expire_on_commit=False) as db:
         record = add_file(db)
         db.commit()
         book = book_service.create_book(db, BookCreate(title="Owner", language="en", cover_file_id=record.id))
@@ -145,7 +147,7 @@ def test_book_deletion_refreshes_cached_file_ownership_before_detaching(test_eng
 
 @pytest.mark.parametrize("action", ["detach", "delete_book"])
 def test_old_file_detached_after_scan_gets_new_retention_window(test_engine, action):
-    factory = sessionmaker(test_engine)
+    factory = sessionmaker(test_engine, info={"access": AccessContext(user_id=None, is_trusted=True)})
     with factory.begin() as db:
         book = add_book(db)
         record = add_file(db, book_id=book.id)
@@ -172,7 +174,7 @@ def test_old_file_detached_after_scan_gets_new_retention_window(test_engine, act
 
 
 def test_ownership_migration_preserves_attached_and_unattached_files(test_engine, migration_config):
-    with Session(test_engine) as db:
+    with create_trusted_session(test_engine) as db:
         book = add_book(db)
         cover = add_file(db, book_id=book.id)
         pdf = add_file(db, key="pdf", kind=FileKind.SOURCE_PDF, book_id=book.id)
@@ -186,7 +188,7 @@ def test_ownership_migration_preserves_attached_and_unattached_files(test_engine
             pdf_id,
         )
     command.upgrade(migration_config, "head")
-    with Session(test_engine) as db:
+    with create_trusted_session(test_engine) as db:
         for file_id in (cover_id, pdf_id):
             record = db.get(StoredFile, file_id)
             assert record is not None
@@ -233,7 +235,7 @@ def test_ownership_migration_refuses_wrong_kind_without_losing_legacy_links(test
     ],
 )
 def test_forbidden_file_owners(test_engine, kind, has_book_owner, has_section_owner, metadata):
-    with Session(test_engine) as db:
+    with create_trusted_session(test_engine) as db:
         book = add_book(db)
         root = add_section(db, book.id)
         # Valid kind-specific metadata ensures rejection is caused by ownership.
@@ -252,7 +254,7 @@ def test_forbidden_file_owners(test_engine, kind, has_book_owner, has_section_ow
 
 
 def test_nested_audio_timestamp_lifecycle_and_unique_owner(test_engine):
-    with Session(test_engine) as db:
+    with create_trusted_session(test_engine) as db:
         root = add_section(db, add_book(db).id)
         nested = add_section(db, root.book_id, source_key="nested", parent_id=root.id)
         one, two = add_audio(db, section_id=root.id), add_audio(db)
@@ -278,7 +280,7 @@ def test_nested_audio_timestamp_lifecycle_and_unique_owner(test_engine):
 
 
 def test_section_audio_cannot_be_claimed_by_book(test_engine):
-    with Session(test_engine) as db:
+    with create_trusted_session(test_engine) as db:
         book = add_book(db)
         root = add_section(db, book.id)
         record = add_audio(db, section_id=root.id)
@@ -287,7 +289,7 @@ def test_section_audio_cannot_be_claimed_by_book(test_engine):
 
 
 def test_section_audio_delete_guards_and_claim_errors(test_engine):
-    with Session(test_engine) as db:
+    with create_trusted_session(test_engine) as db:
         book = add_book(db)
         root = add_section(db, book.id)
         nested = add_section(db, book.id, source_key="nested", parent_id=root.id)

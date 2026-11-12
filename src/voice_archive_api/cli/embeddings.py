@@ -13,6 +13,7 @@ from voice_archive_api.core.errors import ApplicationError
 from voice_archive_api.core.logging import log_exception
 from voice_archive_api.db.session import create_database_engine, create_session_factory
 from voice_archive_api.logic.batches import BookBatchJobState
+from voice_archive_api.services.access import AccessContext
 from voice_archive_api.services.embeddings.service import submit_book_embedding_batches
 
 logger = logging.getLogger(__name__)
@@ -33,7 +34,11 @@ def run(argv: list[str] | None = None) -> int:
             return 1
         engine = create_database_engine(settings.database_url)
         try:
-            result = submit_book_embedding_batches(create_session_factory(engine), settings, args.book_id)
+            result = submit_book_embedding_batches(
+                create_session_factory(engine, access=AccessContext(user_id=None, is_trusted=True)),
+                settings,
+                args.book_id,
+            )
         finally:
             engine.dispose()
         print(json.dumps(result))

@@ -1,3 +1,4 @@
+from threading import Lock
 from typing import Any
 
 from asgi_correlation_id import CorrelationIdMiddleware
@@ -10,6 +11,7 @@ from starlette.types import ASGIApp
 
 from voice_archive_api.core.compression import StructuredGZipMiddleware
 from voice_archive_api.core.config import Settings
+from voice_archive_api.core.request_security import RequestSecurityMiddleware
 
 
 class ApplicationState(State):
@@ -22,6 +24,8 @@ class ApplicationState(State):
     def __init__(self, settings: Settings) -> None:
         super().__init__()
         self.settings = settings
+        self.login_attempts: dict[str, list[float]] = {}
+        self.login_lock = Lock()
 
 
 class Application(FastAPI):
@@ -35,6 +39,7 @@ class Application(FastAPI):
         # Wrap the complete FastAPI stack, including ServerErrorMiddleware, so
         # the library middleware adds request IDs and CORS headers to 500s too.
         active_middleware: ASGIApp = StructuredGZipMiddleware(super().build_middleware_stack())
+        active_middleware = RequestSecurityMiddleware(active_middleware, self.state.settings.cors_origins)
         active_middleware = CORSMiddleware(
             active_middleware,
             allow_origins=list(self.state.settings.cors_origins),

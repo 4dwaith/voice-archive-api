@@ -8,8 +8,6 @@ from sqlalchemy import select
 from voice_archive_api.db.models.content import BookSection
 from voice_archive_api.logic.summaries import GeneratedSummaryWithTranslation
 from voice_archive_api.services.content.service import purge
-from voice_archive_api.services.series import service as series
-from voice_archive_api.services.series.schemas import SeriesCreate
 from voice_archive_api.services.summary import service as summaries
 
 
@@ -124,8 +122,12 @@ def create_summary_series(client, summary_book):
         },
     )
     assert response.status_code == 200
-    with factory() as db:
-        series_id = series.create_series(db, SeriesCreate(title="Journeys")).id
-        series.replace_series_books(db, series_id, [earlier_id, current_id])
+
+    response = client.post("/api/v1/series", json={"title": "Journeys"})
+    assert response.status_code == 201, response.text
+    series_id = response.json()["id"]
+
+    response = client.put(f"/api/v1/series/{series_id}/books", json=[earlier_id, current_id])
+    assert response.status_code == 200, response.text
 
     return series_id, earlier_id, current_id

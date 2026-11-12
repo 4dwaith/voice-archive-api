@@ -15,6 +15,7 @@ from voice_archive_api.core.logging import log_exception
 from voice_archive_api.db.session import create_database_engine, create_session_factory
 from voice_archive_api.file_handling import LocalStorage
 from voice_archive_api.file_handling.cleanup import run_temporary_cleanup
+from voice_archive_api.services.access import AccessContext
 from voice_archive_api.services.embeddings.service import run_embedding_maintenance
 from voice_archive_api.services.files.cleanup import CleanupResult, run_orphan_cleanup, run_promoted_cleanup
 
@@ -117,7 +118,11 @@ def main() -> int:
     engine = create_database_engine(settings.database_url) if args.job != "temporary" else None
     try:
         storage = LocalStorage(settings.upload_root)
-        factory = create_session_factory(engine) if engine is not None else None
+        factory = (
+            create_session_factory(engine, access=AccessContext(user_id=None, is_trusted=True))
+            if engine is not None
+            else None
+        )
         temporary_job = partial(run_temporary_cleanup, storage) if args.job in {"temporary", "all"} else None
         promoted_job = (
             partial(run_promoted_cleanup, factory, storage)

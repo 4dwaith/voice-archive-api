@@ -5,16 +5,18 @@ from unittest.mock import Mock
 import pytest
 from sqlalchemy import event, update
 from sqlalchemy.exc import IntegrityError
-from sqlalchemy.orm import Session, sessionmaker
+from sqlalchemy.orm import sessionmaker
 
 from alembic import command
 from tests.database.content_helpers import add_audio, add_section
 from tests.database.files.test_file_ownership import add_book
+from tests.database.session_helpers import create_trusted_session
 from tests.file_processing.file_samples import cover_bytes, pdf_bytes
 from voice_archive_api.db.models.book import Book
 from voice_archive_api.db.models.file import FileCleanupProgress, PendingFileDeletion, StoredFile
 from voice_archive_api.file_handling import LocalStorage
 from voice_archive_api.logic.files import FileKind
+from voice_archive_api.services.access import AccessContext
 from voice_archive_api.services.books import service as book_service
 from voice_archive_api.services.books.schemas import BookCreate, BookPatch
 from voice_archive_api.services.files import cleanup, service
@@ -26,7 +28,9 @@ FIRST_PENDING_DELETES_REVISION = "0006_pending_file_deletions"
 
 @pytest.fixture
 def factory(test_engine):
-    return sessionmaker(test_engine, expire_on_commit=False)
+    return sessionmaker(
+        test_engine, expire_on_commit=False, info={"access": AccessContext(user_id=None, is_trusted=True)}
+    )
 
 
 @pytest.fixture
@@ -314,15 +318,20 @@ def test_progress_migration_starts_with_null_boundaries_and_preserves_files(
 
 
 def test_expiration_ignores_section_owned_audio_and_queues_unlinked(test_engine):
-    with Session(test_engine) as db:
+    with create_trusted_session(test_engine) as db:
         root = add_section(db, add_book(db).id)
         linked = add_audio(db, section_id=root.id)
         unlinked = add_audio(db)
         linked_id, unlinked_id = linked.id, unlinked.id
         unlinked_key = unlinked.storage_key
         db.commit()
-    assert cleanup.queue_expired_files(sessionmaker(test_engine), datetime.now(UTC)) == 1
-    with Session(test_engine) as db:
+    assert (
+        cleanup.queue_expired_files(
+            sessionmaker(test_engine, info={"access": AccessContext(user_id=None, is_trusted=True)}), datetime.now(UTC)
+        )
+        == 1
+    )
+    with create_trusted_session(test_engine) as db:
         assert db.get(StoredFile, linked_id) is not None
         assert db.get(StoredFile, unlinked_id) is None
         assert db.get(PendingFileDeletion, unlinked_key) is not None

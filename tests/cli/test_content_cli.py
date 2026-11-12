@@ -76,7 +76,9 @@ def test_direct_database_dry_run_publish_and_conflict(test_engine, monkeypatch, 
     settings = Mock(database_url=test_engine.url)
     monkeypatch.setitem(content_import.__dict__, "Settings", lambda: settings)
     with Session(test_engine) as db:
-        book_id = create_book(db, BookCreate(title="Local CLI", language="en")).id
+        book = create_book(db, BookCreate(title="Local CLI", language="en"))
+        book.owner_user_id = 1  # The CLI must explicitly authorize access to private books.
+        book_id = book.id
         audio = add_audio(db)
         audio_id = audio.id
         db.commit()

@@ -10,6 +10,7 @@ from sqlalchemy.orm import Session
 
 from alembic import command
 from tests.database.content_helpers import add_audio
+from tests.database.session_helpers import create_trusted_session
 from tests.file_processing.file_samples import cover_bytes, pdf_bytes
 from voice_archive_api.db.models.book import Book
 from voice_archive_api.db.models.file import PendingFileDeletion, StoredFile
@@ -71,11 +72,11 @@ def test_file_column_check_names_match_the_migration(test_engine):
 
 @pytest.mark.parametrize("kind", [FileKind.COVER, FileKind.SOURCE_PDF])
 def test_prepared_files_persist_without_a_book_and_reload(test_engine, storage, kind):
-    with Session(test_engine) as db:
+    with create_trusted_session(test_engine) as db:
         record = create_file(db, storage, kind)
         file_id = record.id
         assert db.scalar(select(func.count()).select_from(Book)) == 0
-    with Session(test_engine) as db:
+    with create_trusted_session(test_engine) as db:
         record = service.get_file(db, file_id, expected_kind=kind)
         assert record.kind == kind
         assert record.created_at.utcoffset() == timedelta(0)
@@ -92,13 +93,13 @@ def test_prepared_files_persist_without_a_book_and_reload(test_engine, storage, 
 
 
 def test_missing_file_record_raises_domain_error(test_engine):
-    with Session(test_engine) as db, pytest.raises(service.FileNotFound):
+    with create_trusted_session(test_engine) as db, pytest.raises(service.FileNotFound):
         service.get_file(db, 1)
 
 
 @pytest.mark.parametrize("kind,error", [(FileKind.COVER, InvalidImage), (FileKind.SOURCE_PDF, InvalidPdf)])
 def test_invalid_input_cleanup(test_engine, storage, kind, error):
-    with Session(test_engine) as db:
+    with create_trusted_session(test_engine) as db:
         with pytest.raises(error):
             service.create_file(db, kind, BytesIO(b"invalid"), storage, max_bytes=100_000)
         assert db.scalar(select(func.count()).select_from(StoredFile)) == 0
@@ -117,7 +118,7 @@ def test_database_failure_after_commit_preserves_file(test_engine, storage, kind
         connection.driver_connection.close()
         raise connection_error
 
-    with monkeypatch.context() as patch, Session(test_engine) as db:
+    with monkeypatch.context() as patch, create_trusted_session(test_engine) as db:
         patch.setattr(test_engine.dialect, "do_commit", commit_then_disconnect)
         with pytest.raises(OperationalError) as raised:
             create_file(db, storage, kind)
@@ -125,7 +126,7 @@ def test_database_failure_after_commit_preserves_file(test_engine, storage, kind
         assert raised.value.connection_invalidated
 
     # A different connection must see the committed row despite the failed call.
-    with Session(test_engine) as db:
+    with create_trusted_session(test_engine) as db:
         record = db.scalars(select(StoredFile)).one()
         assert remaining_files(storage) == [storage.root / record.storage_key]
         with storage.open(record.storage_key) as stored:
@@ -135,12 +136,12 @@ def test_database_failure_after_commit_preserves_file(test_engine, storage, kind
 @pytest.mark.parametrize("source_timezone", [UTC, timezone(timedelta(hours=5, minutes=30))])
 def test_file_timestamp_preserves_instant(test_engine, source_timezone):
     supplied = datetime(2026, 1, 15, 3, 15, tzinfo=source_timezone)
-    with Session(test_engine) as db:
+    with create_trusted_session(test_engine) as db:
         record = file_record(created_at=supplied)
         db.add(record)
         db.commit()
         file_id = record.id
-    with Session(test_engine) as db:
+    with create_trusted_session(test_engine) as db:
         assert db.get(StoredFile, file_id).created_at == supplied.astimezone(UTC)
 
 
@@ -158,7 +159,7 @@ def test_file_timestamp_preserves_instant(test_engine, source_timezone):
     ],
 )
 def test_database_rejects_invalid_common_file_fields(test_engine, changes):
-    with Session(test_engine) as db:
+    with create_trusted_session(test_engine) as db:
         db.add(file_record(**changes))
         with pytest.raises(IntegrityError):
             db.commit()
@@ -175,7 +176,7 @@ def test_database_rejects_unknown_kind_even_without_python_validation(test_engin
 
 
 def test_storage_key_is_unique_across_kinds(test_engine):
-    with Session(test_engine) as db:
+    with create_trusted_session(test_engine) as db:
         db.add(file_record())
         db.commit()
         db.add(file_record(FileKind.SOURCE_PDF))
@@ -184,14 +185,14 @@ def test_storage_key_is_unique_across_kinds(test_engine):
 
 
 def test_metadata_allows_extra_fields_alongside_required_kind_fields(test_engine):
-    with Session(test_engine) as db:
+    with create_trusted_session(test_engine) as db:
         db.add(file_record(file_metadata={"width": 16, "height": 24, "custom": "value"}))
         db.commit()
         assert db.scalars(select(StoredFile)).one().file_metadata == {"width": 16, "height": 24, "custom": "value"}
 
 
 def test_file_size_supports_more_than_2gb(test_engine):
-    with Session(test_engine) as db:
+    with create_trusted_session(test_engine) as db:
         record = file_record(FileKind.SOURCE_PDF, byte_size=5_000_000_000)
         db.add(record)
         db.commit()
@@ -202,7 +203,7 @@ def test_file_size_supports_more_than_2gb(test_engine):
 def test_files_can_be_added_after_full_downgrade_and_upgrade(test_engine, migration_config, kind):
     command.downgrade(migration_config, "base")
     command.upgrade(migration_config, "head")
-    with Session(test_engine) as db:
+    with create_trusted_session(test_engine) as db:
         record = file_record(kind)
         db.add(record)
         db.commit()
@@ -237,7 +238,7 @@ def test_upgrade_from_first_file_revision_preserves_existing_files(
         connection.execute(historical_files.insert().values(**values, **metadata))
 
     command.upgrade(migration_config, "head")
-    with Session(test_engine) as db:
+    with create_trusted_session(test_engine) as db:
         # IDs can be remapped when the old tables merge; the storage key identifies
         # the same stored file across revisions.
         record = db.scalars(
@@ -253,7 +254,7 @@ def test_upgrade_from_first_file_revision_preserves_existing_files(
 
 @pytest.mark.parametrize("kind", [FileKind.COVER, FileKind.SOURCE_PDF])
 def test_failed_explicit_deletion_commit_preserves_file_record_and_bytes(test_engine, storage, kind):
-    with Session(test_engine) as db:
+    with create_trusted_session(test_engine) as db:
         record = create_file(db, storage, kind)
         file_id, key = record.id, record.storage_key
 
@@ -263,21 +264,21 @@ def test_failed_explicit_deletion_commit_preserves_file_record_and_bytes(test_en
         event.listen(db, "before_commit", interrupt_commit)
         with pytest.raises(RuntimeError, match="deletion commit interrupted"):
             service.delete_file(db, file_id)
-    with Session(test_engine) as db:
+    with create_trusted_session(test_engine) as db:
         assert db.get(StoredFile, file_id) is not None
         assert db.get(PendingFileDeletion, key) is None
     assert storage.exists(key)
 
 
 def test_downgrade_refuses_audio_without_losing_data(test_engine, migration_config):
-    with Session(test_engine) as db:
+    with create_trusted_session(test_engine) as db:
         record = add_audio(db)
         key = record.storage_key
         file_id = record.id
         db.commit()
     with pytest.raises(Exception, match="Remove audio_chapter files"):
         command.downgrade(migration_config, "0011_file_metadata_constraints")
-    with Session(test_engine) as db:
+    with create_trusted_session(test_engine) as db:
         assert db.scalar(select(StoredFile.storage_key)) == key
         service.delete_file(db, file_id)
     command.downgrade(migration_config, "0011_file_metadata_constraints")
@@ -302,7 +303,7 @@ def test_prepared_asset_lookup_returns_detached_snapshots_in_one_query(test_engi
     def capture_query(connection, cursor, statement, parameters, context, executemany):
         statements.append(statement)
 
-    with Session(test_engine) as db:
+    with create_trusted_session(test_engine) as db:
         book = add_book(db)
         root = add_section(db, book.id)
         cover = file_record(storage_key="lookup-cover", book_id=book.id)

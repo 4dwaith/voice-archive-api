@@ -12,6 +12,7 @@ from sqlalchemy.orm import sessionmaker
 from voice_archive_api.db.models.file import StoredFile
 from voice_archive_api.file_handling import LocalStorage
 from voice_archive_api.logic.files import FileKind
+from voice_archive_api.services.access import AccessContext
 from voice_archive_api.services.files import cleanup
 
 NOW = datetime(2026, 10, 21, tzinfo=UTC)
@@ -19,7 +20,9 @@ NOW = datetime(2026, 10, 21, tzinfo=UTC)
 
 @pytest.fixture
 def factory(test_engine):
-    return sessionmaker(test_engine, expire_on_commit=False)
+    return sessionmaker(
+        test_engine, expire_on_commit=False, info={"access": AccessContext(user_id=None, is_trusted=True)}
+    )
 
 
 @pytest.fixture

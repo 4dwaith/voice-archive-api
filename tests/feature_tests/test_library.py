@@ -670,6 +670,17 @@ def assert_no_eager_reads(answer_case):
     assert answer_case["requests"] == []
 
 
+@then(parsers.parse("I am told the selected series is {availability}"))
+def assert_series_availability(answer_case, availability):
+    response = answer_case["response"]
+
+    if availability == "missing":
+        assert response.status_code == 404
+        assert response.json()["error"]["code"] == "series_not_found"
+    else:
+        assert_unavailable_answer(answer_case)
+
+
 @then("the scoped source is reported too large")
 def assert_scope_too_large(answer_case):
     assert answer_case["response"].json()["status"] == "oversize"

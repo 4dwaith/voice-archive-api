@@ -14,10 +14,12 @@ from voice_archive_api.db.models.windows import RetrievalWindow, WindowEmbedding
 from voice_archive_api.logic.books.validation import resolve_primary_language
 from voice_archive_api.logic.library import EvidenceSegment
 from voice_archive_api.logic.search.retrieval import WindowMatch
+from voice_archive_api.services.access import create_owner_filter, get_access_context
 from voice_archive_api.services.books.service import BookNotFound
 from voice_archive_api.services.library.schemas import AskRequest
 from voice_archive_api.services.library.search.dense import search_dense_windows
 from voice_archive_api.services.library.search.lexical import search_lexical_windows
+from voice_archive_api.services.series.service import SeriesNotFound
 
 MAX_EVIDENCE_BYTES = 8_000_000
 
@@ -59,7 +61,7 @@ def read_scope(db: Session, request: AskRequest) -> LibrarySourceSnapshot:
         Book.series_index,
         Book.series_title,
         has_text.label("has_text"),
-    )
+    ).where(create_owner_filter(db, Book.owner_user_id))
     if request.book_id is not None:
         statement = statement.where(Book.id == request.book_id)
     elif request.series_id is not None:
@@ -70,10 +72,16 @@ def read_scope(db: Session, request: AskRequest) -> LibrarySourceSnapshot:
     if request.book_id is not None and not books:
         raise BookNotFound
     series = (
-        db.execute(select(Series.id, Series.title).where(Series.id == request.series_id)).first()
+        db.execute(
+            select(Series.id, Series.title).where(
+                Series.id == request.series_id, create_owner_filter(db, Series.owner_user_id)
+            )
+        ).first()
         if request.series_id is not None
         else None
     )
+    if request.series_id is not None and series is None and not get_access_context(db).is_trusted:
+        raise SeriesNotFound
     return LibrarySourceSnapshot(books, (series.id, series.title) if series else None)
 
 
@@ -81,7 +89,7 @@ def require_current_source(db: Session, request: AskRequest, snapshot: LibrarySo
     try:
         if read_scope(db, request) == snapshot:
             return
-    except BookNotFound:
+    except BookNotFound, SeriesNotFound:
         pass
     raise SourceChangedError
 

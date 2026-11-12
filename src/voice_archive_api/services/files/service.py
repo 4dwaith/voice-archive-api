@@ -10,6 +10,7 @@ from voice_archive_api.core.errors import ApplicationError
 from voice_archive_api.db.models.file import PendingFileDeletion, StoredFile
 from voice_archive_api.file_handling import BinarySource, Storage
 from voice_archive_api.logic.files import FileKind, PreparedAsset
+from voice_archive_api.services.access import create_file_access_filter, get_access_context
 from voice_archive_api.services.files.audio import prepare_audio
 from voice_archive_api.services.files.covers import prepare_cover
 from voice_archive_api.services.files.pdfs import prepare_pdf
@@ -50,7 +51,7 @@ def queue_file_deletion(db: Session, record: StoredFile, *, now: datetime) -> No
 
 
 def get_file(db: Session, file_id: int, *, expected_kind: FileKind | None = None) -> StoredFile:
-    record = db.get(StoredFile, file_id)
+    record = db.scalar(select(StoredFile).where(StoredFile.id == file_id, create_file_access_filter(db)))
     if record is None:
         raise FileNotFound
     if expected_kind is not None and record.kind != expected_kind:
@@ -71,6 +72,7 @@ def get_prepared_assets(
     query = (
         select(StoredFile.id, StoredFile.kind, StoredFile.book_id, StoredFile.section_id, StoredFile.file_metadata)
         .where(StoredFile.id.in_(file_ids))
+        .where(create_file_access_filter(db))
         .order_by(StoredFile.id)
     )
     if for_update:
@@ -85,7 +87,12 @@ def get_prepared_assets(
 def delete_file(db: Session, file_id: int) -> None:
     """Delete an unlinked row and queue its bytes, serializing with ownership updates."""
     with file_write(db):
-        record = db.get(StoredFile, file_id, with_for_update=True, populate_existing=True)
+        record = db.scalar(
+            select(StoredFile)
+            .where(StoredFile.id == file_id, create_file_access_filter(db))
+            .with_for_update()
+            .execution_options(populate_existing=True)
+        )
         if record is None:
             raise FileNotFound
         if record.book_id is not None or record.section_id is not None:
@@ -111,12 +118,19 @@ def create_file(
     *,
     max_bytes: int,
 ) -> StoredFile:
+    access = get_access_context(db)
+    uploader_user_id = access.user_id
+    if uploader_user_id is None:
+        if not access.is_trusted:
+            raise PermissionError("File uploads require an authenticated user or a trusted local command")
+        uploader_user_id = 1  # Reserved Unassigned account for local imports.
     prepare = FILE_STRATEGIES[kind].prepare
     if prepare is None:
         raise ValueError(f"Preparation is not available for {kind}")
     prepared = prepare(source, storage, max_bytes=max_bytes)
     with file_write(db):
         record = StoredFile(
+            uploaded_by_user_id=uploader_user_id,
             kind=kind,
             storage_key=prepared.storage_key,
             byte_size=prepared.byte_size,
@@ -138,6 +152,7 @@ def claim_section_audio(db: Session, file_id: int, *, section_id: int) -> None:
             StoredFile.book_id.is_(None),
             StoredFile.section_id.is_(None),
             StoredFile.kind == FileKind.AUDIO_CHAPTER,
+            create_file_access_filter(db),
         )
         .values(section_id=section_id)
         .returning(StoredFile.id)

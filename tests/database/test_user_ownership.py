@@ -1,10 +1,10 @@
 import pytest
 from sqlalchemy import inspect, select, text
 from sqlalchemy.exc import IntegrityError
-from sqlalchemy.orm import Session
 
 from alembic import command
 from tests.database.content_helpers import add_audio, add_section, add_segment
+from tests.database.session_helpers import create_trusted_session
 from voice_archive_api.db.models.book import Book
 from voice_archive_api.db.models.file import StoredFile
 from voice_archive_api.db.models.series import Series
@@ -17,7 +17,7 @@ from voice_archive_api.services.series.service import SeriesNotFound, create_ser
 
 @pytest.mark.parametrize("changes", [{"is_enabled": True}, {"password_hash": "not-a-real-hash"}])
 def test_placeholder_has_no_email_and_cannot_have_login_credentials(test_engine, changes):
-    with Session(test_engine) as db:
+    with create_trusted_session(test_engine) as db:
         user = db.scalars(select(User)).one()
 
         assert (user.display_name, user.email, user.password_hash, user.is_enabled) == ("Unassigned", None, None, False)
@@ -30,7 +30,7 @@ def test_placeholder_has_no_email_and_cannot_have_login_credentials(test_engine,
 
 
 def test_email_is_case_insensitively_unique(test_engine):
-    with Session(test_engine) as db:
+    with create_trusted_session(test_engine) as db:
         db.add(User(email="reader@example.com", is_enabled=False))
         db.commit()
 
@@ -41,7 +41,7 @@ def test_email_is_case_insensitively_unique(test_engine):
 
 
 def test_migration_assigns_unassigned_owner_and_preserves_content_and_files(test_engine, migration_config):
-    with Session(test_engine) as db:
+    with create_trusted_session(test_engine) as db:
         series = create_series(db, SeriesCreate(title="Existing series"))
         book = create_book(db, BookCreate(title="Existing book", language="en", series_id=series.id))
         section = add_section(db, book.id)
@@ -65,7 +65,7 @@ def test_migration_assigns_unassigned_owner_and_preserves_content_and_files(test
 
     command.upgrade(migration_config, "head")
 
-    with Session(test_engine) as db:
+    with create_trusted_session(test_engine) as db:
         user = db.scalars(select(User)).one()
         assert (user.display_name, user.email, user.password_hash, user.is_enabled) == ("Unassigned", None, None, False)
         assert db.get(Book, book_id).owner_user_id == db.get(Series, series_id).owner_user_id == user.id
@@ -83,7 +83,7 @@ def test_migration_assigns_unassigned_owner_and_preserves_content_and_files(test
 
 @pytest.mark.parametrize("duplicate_is_public", [False, True])
 def test_identity_is_unique_per_owner_including_public_collection(test_engine, duplicate_is_public):
-    with Session(test_engine) as db:
+    with create_trusted_session(test_engine) as db:
         book = create_book(db, BookCreate(title="Shared title", language="en"))
         user = User(email="owner@example.com", is_enabled=False)
         db.add(user)
@@ -107,7 +107,7 @@ def test_identity_is_unique_per_owner_including_public_collection(test_engine, d
 
 @pytest.mark.parametrize("owner_is_public", [False, True])
 def test_series_rejects_different_owners_in_service_and_database(test_engine, owner_is_public):
-    with Session(test_engine) as db:
+    with create_trusted_session(test_engine) as db:
         user = User(email="owner@example.com", is_enabled=False)
         db.add(user)
         db.flush()
@@ -138,7 +138,7 @@ def test_series_rejects_different_owners_in_service_and_database(test_engine, ow
 
 
 def test_downgrade_does_not_discard_accounts_when_global_identity_conflicts(test_engine, migration_config):
-    with Session(test_engine) as db:
+    with create_trusted_session(test_engine) as db:
         book = create_book(db, BookCreate(title="Same", language="en"))
         user = User(email="owner@example.com", is_enabled=False)
         db.add(user)
@@ -152,4 +152,4 @@ def test_downgrade_does_not_discard_accounts_when_global_identity_conflicts(test
 
     assert "users" in inspect(test_engine).get_table_names()
     with test_engine.connect() as db:
-        assert db.scalar(text("SELECT version_num FROM alembic_version")) == "0028_users_and_ownership"
+        assert db.scalar(text("SELECT version_num FROM alembic_version")) == "0029_file_uploaders"

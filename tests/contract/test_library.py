@@ -12,7 +12,7 @@ def test_book_answer_contract(openapi_document):
         "/api/v1/library/ask",
         "post",
         "ask_api_v1_library",
-        {"200": "AskResult", "404": "BookErrorResponse", "422": "ValidationErrorResponse"},
+        {"200": "AskResult", "404": ["BookErrorResponse", "SeriesErrorResponse"], "422": "ValidationErrorResponse"},
     )
     assert_request_body_contract(openapi_document, "/api/v1/library/ask", "post", "AskRequest")
 

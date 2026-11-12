@@ -37,6 +37,9 @@ APPLICATION_ERROR_STATUSES = {
 
 
 COMMON_ERROR_RESPONSES = {
+    401: {"model": HttpErrorResponse, "description": "Authentication required or invalid credentials"},
+    403: {"model": HttpErrorResponse, "description": "Untrusted request origin"},
+    429: {"model": HttpErrorResponse, "description": "Too many sign-in attempts"},
     500: {"model": InternalErrorResponse, "description": "Unexpected service error"},
     405: {"model": HttpErrorResponse, "description": "Method not allowed"},
 }

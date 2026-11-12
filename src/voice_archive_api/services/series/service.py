@@ -8,6 +8,7 @@ from voice_archive_api.core.errors import ApplicationError
 from voice_archive_api.db.models.book import Book
 from voice_archive_api.db.models.series import Series
 from voice_archive_api.db.operations import read_constraint_name
+from voice_archive_api.services.access import can_access_resource, create_owner_filter, get_access_context
 from voice_archive_api.services.books.errors import BookNotFound
 from voice_archive_api.services.series.schemas import SeriesCreate, SeriesPatch
 
@@ -24,7 +25,7 @@ class SeriesNotFound(ApplicationError):
 
 def get_series(db: Session, series_id: int, *, for_update: bool = False) -> Series:
     series = db.get(Series, series_id, with_for_update=for_update, populate_existing=for_update)
-    if series is None:
+    if series is None or not can_access_resource(db, series.owner_user_id):
         raise SeriesNotFound
     return series
 
@@ -32,13 +33,15 @@ def get_series(db: Session, series_id: int, *, for_update: bool = False) -> Seri
 def list_series(db: Session, *, limit: int = 50, offset: int = 0) -> tuple[list[Series], int]:
     if not 1 <= limit <= 100 or offset < 0:
         raise ValueError("limit must be 1..100 and offset must be nonnegative")
-    items = db.scalars(select(Series).order_by(Series.id).limit(limit).offset(offset))
-    return list(items), db.scalar(select(func.count()).select_from(Series)) or 0
+    condition = create_owner_filter(db, Series.owner_user_id)
+    items = db.scalars(select(Series).where(condition).order_by(Series.id).limit(limit).offset(offset))
+    return list(items), db.scalar(select(func.count()).select_from(Series).where(condition)) or 0
 
 
 def create_series(db: Session, payload: SeriesCreate) -> Series:
     now = datetime.now(UTC)
-    series = Series(title=payload.title, created_at=now, updated_at=now)
+    access = get_access_context(db)
+    series = Series(title=payload.title, owner_user_id=access.user_id, created_at=now, updated_at=now)
     db.add(series)
     db.commit()
     db.refresh(series)
@@ -75,6 +78,7 @@ def lock_series_books(db: Session, series_id: int, book_ids: list[int] | None = 
         db.scalars(
             select(Book)
             .where(or_(Book.series_id == series_id, Book.id.in_(book_ids or [])))
+            .where(create_owner_filter(db, Book.owner_user_id))
             .order_by(Book.id)
             .with_for_update()
             .execution_options(populate_existing=True)

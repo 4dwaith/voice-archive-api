@@ -144,7 +144,7 @@ def test_errors_have_an_envelope_request_id_and_cors(boundary_client, caplog, pa
 
 
 def test_method_error_retains_allow_header(boundary_client):
-    response = boundary_client.post("/api/v1/health")
+    response = boundary_client.post("/api/v1/health", headers={"Origin": "http://localhost:5173"})
     assert response.status_code == 405
     assert response.headers["Allow"] == "GET"
     assert HttpErrorResponse.model_validate(response.json()).error.code == "method_not_allowed"

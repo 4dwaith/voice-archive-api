@@ -94,9 +94,9 @@ def test_unique_constraint_handles_a_writer_winning_after_precheck(test_engine, 
     original_check = service.check_duplicate
     intervened = False
 
-    def competing_write(db, title, author, exclude_id=None):
+    def competing_write(db, title, author, exclude_id=None, *, owner_user_id=None):
         nonlocal intervened
-        original_check(db, title, author, exclude_id)
+        original_check(db, title, author, exclude_id, owner_user_id=owner_user_id)
         if not intervened:
             intervened = True
             with Session(test_engine) as other:

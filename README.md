@@ -2,15 +2,15 @@
 
 FastAPI backend using Python 3.14, SQLAlchemy, and PostgreSQL 18. Supports book
 CRUD and pagination, optional cover/PDF links, file uploads, and range-enabled
-file delivery. The frontend is a separate project; authentication is not
-implemented yet.
+file delivery, cookie JWT authentication and owner-scoped libraries. The frontend
+login/guest interface is a separate review and is not implemented yet.
 
 ## Users and ownership administration (first review)
 
-The schema and local commands are implemented; HTTP authentication, access
-enforcement and the login/guest UI remain subsequent reviews. Do not deploy this
-intermediate version as a protected multi-user service. Until those reviews,
-ordinary HTTP creates still have no authenticated owner and use the public scope.
+The schema, local commands, and backend authentication/access enforcement are
+implemented. HTTP creates assign the authenticated user's ownership. Public demo
+content is maintained through trusted local commands; the login/guest UI follows
+in review 3.
 
 Migration `0028_users_and_ownership` creates the disabled placeholder account
 `Unassigned` and assigns all existing books and series to it. No migration
@@ -47,15 +47,72 @@ collection. A deferred composite foreign key requires series/book ownership to
 match, using a generated `ownership_key` (zero for public) solely for that
 constraint. User deletion is restricted while books/series reference the account.
 
-Files have no independent user/admin column: linked files inherit their book's
-ownership, directly or through a section. Only unlinked files are admin-owned;
-enforcement follows in the API review. No file bytes, content versions, imported
+Files record `uploaded_by_user_id`. Linked-file access inherits the book's
+ownership, directly or through a section; unlinked-file access belongs only to
+the uploader. The uploader is retained when linking or unlinking. No file bytes, content versions, imported
 content, preparation records or media links are changed by migration or demo
 designation. Local commands are trusted operator tools, not public API endpoints.
 
 Downgrade restores global title/author uniqueness and refuses conflicting data
 transactionally. Resolve cross-owner duplicates before attempting a downgrade;
 there is no automatic deletion or merge of books.
+
+## Sign-in and API access (second review)
+
+Set `VOICE_ARCHIVE_AUTH_SECRET` to a random secret of at least 32 characters.
+Keep it stable across restarts and API workers. Without it, login returns 503;
+there is no development authentication bypass. Compose passes the secret and
+cookie settings from `.env`. Keep `VOICE_ARCHIVE_AUTH_COOKIE_SECURE=true` for
+HTTPS, including the Caddy LAN deployment; use false only for local HTTP.
+Use the same hostname for local frontend/API so SameSite cookies work across ports.
+
+- `POST /api/v1/auth/login`: JSON `email` and `password`; returns ID, email and
+  display name, and sets `voice_archive_session` as an HttpOnly, SameSite=Lax,
+  host-only cookie scoped to `/api`. Passwords and JWTs are not returned in JSON.
+- `GET /api/v1/auth/me`: current user or JSON null for a visitor without a cookie.
+  Expired/invalid credentials or a disabled/missing account return 401, including
+  when requesting public resources. Authentication is checked on every request.
+- `POST /api/v1/auth/logout`: clears the cookie, including an invalid/expired
+  cookie. Logout still requires a trusted request origin. It does not revoke a
+  copied JWT before expiration; refresh/revocation infrastructure is out of scope.
+- Tokens expire after `VOICE_ARCHIVE_AUTH_TOKEN_TTL_SECONDS` (default 43,200;
+  allowed range 60-86,400). Login is limited to ten attempts per client IP per
+  minute in each API process. This bounded in-memory limit is not a distributed
+  rate limiter; an edge limit is appropriate if running multiple workers.
+
+All unsafe `/api/` requests are checked before routing/body parsing. An `Origin`
+must exactly match `VOICE_ARCHIVE_CORS_ORIGINS`; an explicit untrusted/null Origin
+is rejected even if Fetch Metadata says same-origin. When Origin is absent,
+the middleware validates the Referer's origin, or requires
+`Sec-Fetch-Site: same-origin` if neither source header is present. Missing headers,
+untrusted same-site subdomains, and direct navigations do not authorize writes.
+Explicitly trusted development origins may be cross-origin/cross-site. No CSRF
+token cookie or custom CSRF header is needed. This is browser CSRF protection;
+non-browser clients still need valid credentials and may send a trusted Origin.
+API responses prevent browser/shared caching of account-sensitive data.
+
+Visitors can read public books, content and media. Users can also read their own
+books; mutations require ownership. Inaccessible books, series and files return
+404. Book/series lists and totals are filtered in SQL. Uploads record the signed-in
+user. Only that user may read, delete or claim an unlinked file. Once linked,
+the book's owner governs access, including audio range and HEAD requests.
+Public books cannot be mutated through the ordinary API. Health/readiness and
+OpenAPI remain independent of authentication.
+
+Gemini Live tokens and library questions require login. Library-wide, series and
+book retrieval use request-scoped database sessions, including source consistency
+checks, so other users' private content is excluded before provider calls.
+
+`AccessContext.is_write` distinguishes read and write access; `is_public()`
+encodes whether public resources are eligible. Local commands and the maintenance
+entry point explicitly create sessions with `is_trusted=True`. Missing context
+grants guest access only, never unrestricted access. HTTP contexts are untrusted.
+
+Migration `0029_file_uploaders` backfills linked files from the current book owner
+(including section-owned audio); unlinked files use the reserved Unassigned user
+ID 1. Legacy public files without a user owner also use Unassigned for provenance.
+New HTTP uploads always override that local-command default with the uploader's
+ID. This migration does not move bytes or alter book/content ownership.
 
 Operational failures consumed by CLI, HTTP/provider fallbacks or maintenance are
 logged with their causes, stack locations and operation/resource identifiers.
@@ -287,8 +344,15 @@ docker compose --profile test stop db-test
 The suite uses a separate PostgreSQL service, isolated databases, and temporary
 file storage. Coverage is printed in the terminal.
 
+The shared `client` fixture signs in through the real login endpoint as
+`test_user` (`reader@example.com`); authorization remains enabled. API-created
+resources belong to that user. Tests that seed resources directly specify their
+owner/uploader where needed. `guest_client` has no session cookie, and
+`schema_only_client` serves documentation checks without a database.
+
 - [Features](tests/features/) and [step implementations](tests/feature_tests/): executable behavior specifications. Content [import](tests/features/content/imports.feature) and [purge](tests/features/content/purge.feature) scenarios exercise real uploads, publication/dry-run, rejected input, concurrent import, and conditional cleanup.
 - [Contracts](tests/contract/): request/response schemas and OpenAPI declarations.
+- [Access](tests/access/): authentication, origin checks, and guest/owner/other-user resource access.
 - [Logic](tests/logic/): pure validation, transformations, and dependency boundaries.
 - [Services](tests/services/): integrations between services, persisted data, and pure rules.
 - [Database](tests/database/): constraints, transactions, concurrency, and migrations.

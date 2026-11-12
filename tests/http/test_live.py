@@ -19,12 +19,12 @@ def mock_gemini_client(monkeypatch):
     return client_class
 
 
-def test_live_token_is_single_use_constrained_and_not_cached(schema_only_client, mock_gemini_client):
-    settings = schema_only_client.app.state.settings
+def test_live_token_is_single_use_constrained_and_not_cached(client, mock_gemini_client):
+    settings = client.app.state.settings
     settings.gemini_api_key = SecretStr("server-secret")
     before = datetime.now(UTC)
 
-    response = schema_only_client.post("/api/v1/live/token")
+    response = client.post("/api/v1/live/token")
 
     after = datetime.now(UTC)
     assert response.status_code == 200
@@ -37,8 +37,8 @@ def test_live_token_is_single_use_constrained_and_not_cached(schema_only_client,
             api_version="v1beta", timeout=15000, retry_options=types.HttpRetryOptions(attempts=1)
         ),
     )
-    client = mock_gemini_client.return_value
-    create_token = client.aio.__aenter__.return_value.auth_tokens.create
+    provider_client = mock_gemini_client.return_value
+    create_token = provider_client.aio.__aenter__.return_value.auth_tokens.create
     create_token.assert_awaited_once()
     config = create_token.call_args.kwargs["config"]
     assert config.uses == 1
@@ -48,12 +48,12 @@ def test_live_token_is_single_use_constrained_and_not_cached(schema_only_client,
     )
     assert before + timedelta(minutes=1) <= config.new_session_expire_time <= after + timedelta(minutes=1)
     assert config.expire_time - config.new_session_expire_time == timedelta(minutes=29)
-    client.aio.__aexit__.assert_awaited_once()
-    client.__exit__.assert_called_once()
+    provider_client.aio.__aexit__.assert_awaited_once()
+    provider_client.__exit__.assert_called_once()
 
 
-def test_live_token_locks_only_model_and_audio_in_sdk_request(schema_only_client, monkeypatch):
-    schema_only_client.app.state.settings.gemini_api_key = SecretStr("server-secret")
+def test_live_token_locks_only_model_and_audio_in_sdk_request(client, monkeypatch):
+    client.app.state.settings.gemini_api_key = SecretStr("server-secret")
     requests = []
 
     def handle_request(request):
@@ -66,7 +66,7 @@ def test_live_token_locks_only_model_and_audio_in_sdk_request(schema_only_client
 
     monkeypatch.setattr("voice_archive_api.services.live.genai.Client", create_test_client)
 
-    response = schema_only_client.post("/api/v1/live/token")
+    response = client.post("/api/v1/live/token")
 
     assert response.status_code == 200
     assert len(requests) == 1
@@ -74,16 +74,16 @@ def test_live_token_locks_only_model_and_audio_in_sdk_request(schema_only_client
     payload = json.loads(requests[0].content)
     assert set(payload["fieldMask"].split(",")) == {"model", "generationConfig.responseModalities"}
     assert payload["bidiGenerateContentSetup"] == {
-        "model": f"models/{schema_only_client.app.state.settings.gemini_live_model}",
+        "model": f"models/{client.app.state.settings.gemini_live_model}",
         "generationConfig": {"responseModalities": ["AUDIO"]},
     }
 
 
-def test_live_without_configuration_is_unavailable(schema_only_client, mock_gemini_client):
-    schema_only_client.app.state.settings.gemini_api_key = None
-    schema_only_client.app.state.settings.gemini_batch_api_key = SecretStr("batch-only-secret")
+def test_live_without_configuration_is_unavailable(client, mock_gemini_client):
+    client.app.state.settings.gemini_api_key = None
+    client.app.state.settings.gemini_batch_api_key = SecretStr("batch-only-secret")
 
-    response = schema_only_client.post("/api/v1/live/token")
+    response = client.post("/api/v1/live/token")
 
     assert response.status_code == 503
     assert response.json()["error"]["code"] == "live_unavailable"
@@ -91,34 +91,34 @@ def test_live_without_configuration_is_unavailable(schema_only_client, mock_gemi
 
 
 @pytest.mark.parametrize("failure", ["network", "rejected", "invalid", "timeout"])
-def test_live_provider_failures_hide_credentials(schema_only_client, mock_gemini_client, failure, caplog):
-    schema_only_client.app.state.settings.gemini_api_key = SecretStr("server-secret")
+def test_live_provider_failures_hide_credentials(client, mock_gemini_client, failure, caplog):
+    client.app.state.settings.gemini_api_key = SecretStr("server-secret")
     failures = {
         "network": httpx.ConnectError("server-secret"),
         "rejected": errors.ClientError(403, {"error": {"message": "server-secret"}}),
         "invalid": ValueError("server-secret"),
         "timeout": TimeoutError("server-secret"),
     }
-    client = mock_gemini_client.return_value
-    client.aio.__aenter__.return_value.auth_tokens.create.side_effect = failures[failure]
+    provider_client = mock_gemini_client.return_value
+    provider_client.aio.__aenter__.return_value.auth_tokens.create.side_effect = failures[failure]
 
-    response = schema_only_client.post("/api/v1/live/token")
+    response = client.post("/api/v1/live/token")
 
     assert response.status_code == 503
     assert response.json()["error"]["code"] == "live_unavailable"
     assert "server-secret" not in response.text
     assert "server-secret" not in caplog.text
-    client.aio.__aexit__.assert_awaited_once()
-    client.__exit__.assert_called_once()
+    provider_client.aio.__aexit__.assert_awaited_once()
+    provider_client.__exit__.assert_called_once()
 
 
 @pytest.mark.parametrize("name", [None, ""])
-def test_live_without_a_provider_token_is_unavailable(schema_only_client, mock_gemini_client, name):
-    schema_only_client.app.state.settings.gemini_api_key = SecretStr("server-secret")
+def test_live_without_a_provider_token_is_unavailable(client, mock_gemini_client, name):
+    client.app.state.settings.gemini_api_key = SecretStr("server-secret")
     create_token = mock_gemini_client.return_value.aio.__aenter__.return_value.auth_tokens.create
     create_token.return_value = types.AuthToken(name=name)
 
-    response = schema_only_client.post("/api/v1/live/token")
+    response = client.post("/api/v1/live/token")
 
     assert response.status_code == 503
     assert response.json()["error"]["code"] == "live_unavailable"

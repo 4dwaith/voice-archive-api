@@ -9,6 +9,7 @@ from voice_archive_api.core.errors import ApplicationError
 from voice_archive_api.db.models.book import Book
 from voice_archive_api.db.models.content import BookSection, BookSegment
 from voice_archive_api.db.models.file import StoredFile
+from voice_archive_api.services.access import can_access_resource
 from voice_archive_api.services.books.service import BookNotFound
 from voice_archive_api.services.content.schemas import SectionPage, SectionRead, SegmentPage, SegmentRead
 
@@ -22,7 +23,7 @@ def lock_book(db: Session, book_id: int, version: UUID | None = None) -> Book:
     book = db.scalar(
         select(Book).where(Book.id == book_id).with_for_update(read=True).execution_options(populate_existing=True)
     )
-    if book is None:
+    if book is None or not can_access_resource(db, book.owner_user_id):
         raise BookNotFound
     if version is not None and book.content_version != version:
         raise ContentVersionMismatch

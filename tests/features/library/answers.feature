@@ -252,13 +252,13 @@ Feature: Answer questions from prepared canonical passages
   Scenario Outline: An unavailable series never expands to the library
     Given I select a <state> series
     When I ask why the traveller returned home
-    Then I am told that an answer is temporarily unavailable
+    Then I am told the selected series is <availability>
     And no canonical source or provider request is loaded
 
     Examples:
-      | state   |
-      | empty   |
-      | removed |
+      | state   | availability |
+      | empty   | unavailable  |
+      | removed | missing      |
 
   Scenario Outline: Whole-book answering is an explicit choice independent of preparation
     Given the journey book has prepared passage search

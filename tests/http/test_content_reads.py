@@ -7,7 +7,6 @@ from uuid import uuid4
 
 import pytest
 from sqlalchemy import update
-from sqlalchemy.orm import Session
 
 from tests.http.test_content import setup_book
 from voice_archive_api.db.models.content import BookSection
@@ -68,7 +67,7 @@ def test_complete_reads_hierarchy_targets_regions_timing_and_files(client):
 
 def test_section_offsets_count_rows_even_when_sequences_have_gaps(client, test_engine):
     book, _, _, version = publish(client)
-    with Session(test_engine) as db:
+    with client.app.state.session_factory() as db:
         db.execute(update(BookSection).where(BookSection.book_id == book).values(sequence=BookSection.sequence * 10))
         db.commit()
     assert [row["sequence"] for row in collect(client, book, version, "sections")] == [0, 10, 20]
@@ -169,7 +168,7 @@ def test_shared_read_lock_blocks_purge_until_response_snapshot_released(client, 
     book, _, _, version = publish(client)
     tag = client.get(f"/api/v1/books/{book}/content").headers["etag"]
     entered = Event()
-    with Session(test_engine) as db, ThreadPoolExecutor(max_workers=1) as pool:
+    with client.app.state.session_factory() as db, ThreadPoolExecutor(max_workers=1) as pool:
         lock_book(db, book)
 
         def purge():

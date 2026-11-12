@@ -3,10 +3,10 @@
 from functools import partial
 
 import pytest
-from sqlalchemy.orm import Session
 
 from tests.database.content_helpers import add_audio, add_section
 from tests.database.files.test_file_ownership import add_book, add_file
+from tests.database.session_helpers import create_trusted_session
 from voice_archive_api.logic.content_validation.assets import referenced_file_ids, validate_assets
 from voice_archive_api.logic.content_validation.validation import ContentValidationError, validate_content
 from voice_archive_api.logic.files import FileKind
@@ -15,7 +15,7 @@ from voice_archive_api.services.files.service import get_prepared_assets
 
 @pytest.fixture
 def prepared_content_assets(test_engine):
-    with Session(test_engine) as db:
+    with create_trusted_session(test_engine) as db:
         book = add_book(db)
         track = add_audio(db)
         pdf = add_file(db, kind=FileKind.SOURCE_PDF)

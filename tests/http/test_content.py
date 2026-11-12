@@ -6,7 +6,6 @@ from threading import Barrier
 
 import pytest
 from sqlalchemy import func, select
-from sqlalchemy.orm import Session
 
 from tests.file_processing.file_samples import cover_bytes, mp3_bytes, pdf_bytes
 from voice_archive_api.db.models.book import Book
@@ -91,7 +90,7 @@ def test_import_dry_run_publish_repeat_purge_and_fresh_version(client, test_engi
     assert dry.status_code == 200, dry.text
     assert dry.json() == {"dry_run": True, "section_count": 2, "segment_count": 2, "content_version": None}
     assert client.get(url + "/content").headers["etag"] == before.headers["etag"]
-    with Session(test_engine) as db:
+    with client.app.state.session_factory() as db:
         assert db.scalar(select(func.count()).select_from(BookSection)) == 0
         assert db.get(StoredFile, media[1]).section_id is None
     result = client.post(url + "/content-imports", json=data)
@@ -101,7 +100,7 @@ def test_import_dry_run_publish_repeat_purge_and_fresh_version(client, test_engi
     assert manifest.json()["content_version"] == result.json()["content_version"]
     for suffix in ("", "?dry_run=true"):
         assert client.post(url + "/content-imports" + suffix, json=data).status_code == 409
-    with Session(test_engine) as db:
+    with client.app.state.session_factory() as db:
         segment = db.scalar(select(BookSegment).where(BookSegment.source_key == "a"))
         assert segment.text_content == "Hello\nworld"
         assert segment.page_indexes == [0]
@@ -119,7 +118,7 @@ def test_import_dry_run_publish_repeat_purge_and_fresh_version(client, test_engi
     assert client.get(f"/api/v1/files/{cover}").status_code == 200
     for file_id in media:
         assert client.get(f"/api/v1/files/{file_id}").status_code == 404
-    with Session(test_engine) as db:
+    with client.app.state.session_factory() as db:
         assert db.scalar(select(func.count()).select_from(BookSection)) == 0
         assert db.scalar(select(func.count()).select_from(BookSegment)) == 0
         assert set(db.scalars(select(PendingFileDeletion.storage_key))) == set(keys)
@@ -205,7 +204,7 @@ def test_invalid_asset_imports_leave_no_claims(client, test_engine, case, code):
     response = client.post(f"/api/v1/books/{book}/content-imports", json=data)
     assert response.status_code == 422, response.text
     assert code in {issue["code"] for issue in response.json()["issues"]}
-    with Session(test_engine) as db:
+    with client.app.state.session_factory() as db:
         assert db.scalar(select(func.count()).select_from(BookSegment)) == 0
         assert db.get(StoredFile, media[1]).section_id is None
         assert db.get(Book, book).content_version is None
@@ -222,9 +221,9 @@ def test_atomic_import_and_purge_failure_rollback(client, test_engine, monkeypat
 
     with monkeypatch.context() as patch:
         patch.setattr(service.files, "claim_section_audio", fail_after_claim)
-        with Session(test_engine) as db, pytest.raises(RuntimeError):
+        with client.app.state.session_factory() as db, pytest.raises(RuntimeError):
             service.publish(db, book, validated, dry_run=False)
-    with Session(test_engine) as db:
+    with client.app.state.session_factory() as db:
         assert db.scalar(select(func.count()).select_from(BookSection)) == 0
         assert db.get(StoredFile, media[2]).section_id is None
     assert client.post(f"/api/v1/books/{book}/content-imports", json=data).status_code == 200
@@ -236,10 +235,10 @@ def test_atomic_import_and_purge_failure_rollback(client, test_engine, monkeypat
         raise RuntimeError("injected")
 
     monkeypatch.setattr(service.files, "queue_file_deletion", fail_after_queue)
-    with Session(test_engine) as db, pytest.raises(RuntimeError):
+    with client.app.state.session_factory() as db, pytest.raises(RuntimeError):
         service.purge(db, book, tag)
     assert client.get(f"/api/v1/books/{book}/content").headers["etag"] == tag
-    with Session(test_engine) as db:
+    with client.app.state.session_factory() as db:
         assert db.scalar(select(func.count()).select_from(BookSegment)) == 2
         assert db.scalar(select(func.count()).select_from(PendingFileDeletion)) == 0
         assert db.get(StoredFile, media[1]).section_id is not None
@@ -251,7 +250,7 @@ def test_concurrent_imports_publish_exactly_once(client, test_engine):
 
     def publish_once():
         validated = validate_content(data)
-        with Session(test_engine) as db:
+        with client.app.state.session_factory() as db:
             barrier.wait(timeout=5)
             try:
                 service.publish(db, book, validated, dry_run=False)
@@ -261,7 +260,7 @@ def test_concurrent_imports_publish_exactly_once(client, test_engine):
 
     with ThreadPoolExecutor(max_workers=2) as pool:
         assert sorted(pool.map(lambda _: publish_once(), range(2))) == ["conflict", "published"]
-    with Session(test_engine) as db:
+    with client.app.state.session_factory() as db:
         assert db.scalar(select(func.count()).select_from(BookSegment)) == 2
 
 
@@ -273,7 +272,7 @@ def test_concurrent_books_cannot_claim_the_same_media(client, test_engine):
     def attempt(book_id):
         from voice_archive_api.logic.content_validation.validation import ContentValidationError
 
-        with Session(test_engine) as db:
+        with client.app.state.session_factory() as db:
             barrier.wait(timeout=5)
             try:
                 service.publish(db, book_id, validate_content(data), dry_run=False)
@@ -285,7 +284,7 @@ def test_concurrent_books_cannot_claim_the_same_media(client, test_engine):
     with ThreadPoolExecutor(max_workers=2) as pool:
         results = list(pool.map(attempt, [book, other]))
     assert sum(r is not None for r in results) == 1
-    with Session(test_engine) as db:
+    with client.app.state.session_factory() as db:
         assert db.scalar(select(func.count()).select_from(BookSection)) == 2
         assert db.scalar(select(func.count()).select_from(BookSegment)) == 2
         assert db.get(StoredFile, media[0]).book_id in results
@@ -305,12 +304,12 @@ def test_dry_run_reserves_no_media_and_missing_books_are_404(client):
     assert client.delete(missing + "/content", headers={"If-Match": '"tag"'}).status_code == 404
 
 
-def test_strict_json_and_payload_bounds_before_database(schema_only_client, monkeypatch):
+def test_strict_json_and_payload_bounds_before_content_service(client, monkeypatch):
     from voice_archive_api.api.v1 import content
 
     monkeypatch.setattr(content, "MAX_PAYLOAD_BYTES", 100)
     for raw, status in [(b"{" * 101, 413), (b'{"schema_version":1,"schema_version":1}', 422), (b"not json", 422)]:
-        response = schema_only_client.post(
+        response = client.post(
             "/api/v1/books/1/content-imports", content=raw, headers={"Content-Type": "application/json"}
         )
         assert response.status_code == status, response.text

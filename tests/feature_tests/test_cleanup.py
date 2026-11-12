@@ -9,8 +9,8 @@ from io import BytesIO
 
 import pytest
 from pytest_bdd import given, parsers, scenarios, then, when
-from sqlalchemy.orm import Session
 
+from tests.database.session_helpers import create_trusted_session
 from tests.file_processing.file_samples import cover_bytes, pdf_bytes
 from voice_archive_api.db.models.file import FileCleanupProgress, PendingFileDeletion, StoredFile
 from voice_archive_api.file_handling import LocalStorage
@@ -76,7 +76,7 @@ def configure_database(test_engine, cli_environment):
 
 @given(parsers.parse("an unlinked {kind} uploaded {days:d} days ago"))
 def uploaded_file(test_engine, storage, state, kind, days):
-    with Session(test_engine, expire_on_commit=False) as db:
+    with create_trusted_session(test_engine, expire_on_commit=False) as db:
         file_kind = {"cover": FileKind.COVER, "source PDF": FileKind.SOURCE_PDF}[kind]
         payload = {FileKind.COVER: cover_bytes, FileKind.SOURCE_PDF: pdf_bytes}[file_kind]()
         record = file_service.create_file(db, file_kind, BytesIO(payload), storage, max_bytes=100_000)
@@ -92,7 +92,7 @@ def file_link(state):
 
 @given("the uploaded file is linked to a book")
 def linked_file(test_engine, state):
-    with Session(test_engine) as db:
+    with create_trusted_session(test_engine) as db:
         state.book_id = book_service.create_book(
             db,
             BookCreate(
@@ -105,7 +105,7 @@ def linked_file(test_engine, state):
 
 @given("maintenance has already scanned that upload date")
 def past_scan_boundary(test_engine):
-    with Session(test_engine) as db:
+    with create_trusted_session(test_engine) as db:
         progress = db.get(FileCleanupProgress, 1)
         progress.cleanup_before = datetime.now(UTC) - timedelta(days=7)
         db.commit()
@@ -113,7 +113,7 @@ def past_scan_boundary(test_engine):
 
 @given(parsers.parse("the book's file is {action}"))
 def remove_book_file(test_engine, storage, state, action):
-    with Session(test_engine) as db:
+    with create_trusted_session(test_engine) as db:
         if action == "removed by deleting the book":
             book_service.delete_book(db, state.book_id)
         elif action == "cleared":
@@ -127,7 +127,7 @@ def remove_book_file(test_engine, storage, state, action):
 
 @given("deletion of the uploaded file is pending from an earlier run")
 def pending_deletion(test_engine, state):
-    with Session(test_engine) as db:
+    with create_trusted_session(test_engine) as db:
         file_service.queue_file_deletion(db, db.get(type(state.file), state.file.id), now=datetime.now(UTC))
         db.commit()
 
@@ -177,7 +177,7 @@ def maintenance_succeeded(state):
 @then("the uploaded file is removed")
 def uploaded_file_removed(test_engine, storage, state):
     assert not storage.exists(state.file.storage_key)
-    with Session(test_engine) as db:
+    with create_trusted_session(test_engine) as db:
         assert db.get(type(state.file), state.file.id) is None
         assert db.get(PendingFileDeletion, state.file.storage_key) is None
 
@@ -185,7 +185,7 @@ def uploaded_file_removed(test_engine, storage, state):
 @then("the uploaded file remains available")
 def uploaded_file_preserved(test_engine, storage, state):
     assert storage.exists(state.file.storage_key)
-    with Session(test_engine) as db:
+    with create_trusted_session(test_engine) as db:
         assert db.get(type(state.file), state.file.id) is not None
 
 

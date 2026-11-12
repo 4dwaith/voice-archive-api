@@ -5,8 +5,8 @@ from datetime import UTC, datetime
 import pytest
 from sqlalchemy import delete, func, select
 from sqlalchemy.exc import IntegrityError
-from sqlalchemy.orm import Session
 
+from tests.database.session_helpers import create_trusted_session
 from voice_archive_api.db.models.book import Book
 from voice_archive_api.db.models.file import StoredFile
 from voice_archive_api.logic.files import FileKind
@@ -17,7 +17,7 @@ from voice_archive_api.services.files import service as file_service
 
 @pytest.fixture
 def cover_file_id(test_engine) -> int:
-    with Session(test_engine, expire_on_commit=False) as db:
+    with create_trusted_session(test_engine, expire_on_commit=False) as db:
         cover = StoredFile(
             kind=FileKind.COVER,
             storage_key="promoted/prepared-cover",
@@ -34,7 +34,7 @@ def cover_file_id(test_engine) -> int:
 
 @pytest.fixture
 def source_pdf_file_id(test_engine) -> int:
-    with Session(test_engine, expire_on_commit=False) as db:
+    with create_trusted_session(test_engine, expire_on_commit=False) as db:
         pdf = StoredFile(
             kind=FileKind.SOURCE_PDF,
             storage_key="promoted/prepared-pdf",
@@ -70,7 +70,7 @@ def assert_competing_claim_is_rejected(
         # It has fetched the file record from the database ... (1/3)
         record = original_get_file_record(db, requested_id, **kwargs)
 
-        with Session(test_engine) as other:
+        with create_trusted_session(test_engine) as other:
             # ... and before the book updates, a new book with the same file has been created in the database ... (2/3)
             service.create_book(
                 other,
@@ -82,7 +82,7 @@ def assert_competing_claim_is_rejected(
             )
         return record
 
-    with Session(test_engine) as db:
+    with create_trusted_session(test_engine) as db:
         book = service.create_book(db, BookCreate(title="Interrupted book", language="en"))
         book_id = book.id
         original_updated_at = book.updated_at
@@ -100,7 +100,7 @@ def assert_competing_claim_is_rejected(
                 ),
             )
 
-    with Session(test_engine) as db:
+    with create_trusted_session(test_engine) as db:
         # After the error has interrupted our book update, it should still have the same values as when it was created.
         book = db.get(Book, book_id)
         assert isinstance(book, Book)
@@ -134,7 +134,7 @@ def assert_removal_after_lookup_rejects_save(
 
         # It has fetched the file record from the database ... (1/3)
         record = original_get_file_record(db, requested_id, **kwargs)
-        with Session(test_engine) as other:
+        with create_trusted_session(test_engine) as other:
             # ... and then the file got deleted from the database ... (2/3)
             other.execute(delete(model).where(model.id == requested_id))
             other.commit()
@@ -143,7 +143,7 @@ def assert_removal_after_lookup_rejects_save(
     monkeypatch.setattr(file_service, get_file, removed_after_lookup)
     # ... so it fails when creating a book with the deleted file (3/3)
     with (
-        Session(test_engine) as db,
+        create_trusted_session(test_engine) as db,
         pytest.raises(file_not_found_error),
     ):
         service.create_book(
@@ -154,17 +154,17 @@ def assert_removal_after_lookup_rejects_save(
                 **{file_field_key: file_id},
             ),
         )
-    with Session(test_engine) as db:
+    with create_trusted_session(test_engine) as db:
         assert db.scalar(select(func.count()).select_from(Book)) == 0
 
 
 def assert_linked_file_cannot_be_deleted(test_engine, *, model, file_id, file_field_key):
-    with Session(test_engine) as db:
+    with create_trusted_session(test_engine) as db:
         book_id = service.create_book(db, BookCreate(title="Owner", language="en", **{file_field_key: file_id})).id
-    with Session(test_engine) as db, pytest.raises(IntegrityError, match="Cannot delete a linked file"):
+    with create_trusted_session(test_engine) as db, pytest.raises(IntegrityError, match="Cannot delete a linked file"):
         db.execute(delete(model).where(model.id == file_id))
         db.commit()
-    with Session(test_engine) as db:
+    with create_trusted_session(test_engine) as db:
         assert db.get(model, file_id) is not None
         assert getattr(db.get(Book, book_id), file_field_key) == file_id
 
@@ -242,7 +242,7 @@ def test_linked_source_pdf_cannot_be_deleted_directly(test_engine, source_pdf_fi
 )
 def test_book_service_rejects_wrong_kind_without_saving(test_engine, request, field, fixture_name):
     file_id = request.getfixturevalue(fixture_name)
-    with Session(test_engine) as db:
+    with create_trusted_session(test_engine) as db:
         book = service.create_book(db, BookCreate(title="Owner", language="en"))
         with pytest.raises(file_service.FileKindMismatch):
             service.patch_book(db, book.id, BookPatch(**{field: file_id}))

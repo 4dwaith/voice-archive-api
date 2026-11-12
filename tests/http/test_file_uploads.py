@@ -36,8 +36,8 @@ def test_disk_spooled_upload_is_closed_on_success_and_failure(client, file_stora
         assert not any(path.is_file() for path in file_storage.root.rglob("*"))
 
 
-def test_receive_limit_stops_a_chunked_upload_and_closes_partial_spool(schema_only_client, tracked_spools):
-    app = schema_only_client.app
+def test_receive_limit_stops_a_chunked_upload_and_closes_partial_spool(client, tracked_spools):
+    app = client.app
     app.state.settings.pdf_max_bytes = 1_100_000
     chunks = [
         b'--upload\r\nContent-Disposition: form-data; name="file"; filename="source.pdf"\r\n'
@@ -67,7 +67,11 @@ def test_receive_limit_stops_a_chunked_upload_and_closes_partial_spool(schema_on
         "raw_path": b"/api/v1/files/source_pdf",
         "root_path": "",
         "query_string": b"",
-        "headers": [(b"content-type", b"multipart/form-data; boundary=upload")],
+        "headers": [
+            (b"content-type", b"multipart/form-data; boundary=upload"),
+            (b"origin", b"http://localhost:5173"),
+            (b"cookie", client.build_request("POST", "/api/v1/files/source_pdf").headers["cookie"].encode()),
+        ],
         "client": ("127.0.0.1", 12345),
         "server": ("testserver", 80),
     }
@@ -81,15 +85,15 @@ def test_receive_limit_stops_a_chunked_upload_and_closes_partial_spool(schema_on
     assert tracked_spools[0].closed
 
 
-def test_configured_total_request_limit_is_applied_before_service(schema_only_client):
-    schema_only_client.app.state.settings.upload_max_bytes = 32
-    response = schema_only_client.post("/api/v1/files/cover", files={"file": ("cover.png", b"x" * 33)})
+def test_configured_total_request_limit_is_applied_before_service(client):
+    client.app.state.settings.upload_max_bytes = 32
+    response = client.post("/api/v1/files/cover", files={"file": ("cover.png", b"x" * 33)})
     assert response.status_code == 413, response.text
     assert response.json()["error"]["code"] == "file_too_large"
 
 
-def test_unknown_kind_is_rejected_before_reading_or_spooling(schema_only_client, tracked_spools):
-    response = schema_only_client.post("/api/v1/files/unknown", files={"file": ("file.bin", b"data")})
+def test_unknown_kind_is_rejected_before_reading_or_spooling(client, tracked_spools):
+    response = client.post("/api/v1/files/unknown", files={"file": ("file.bin", b"data")})
     assert response.status_code == 422
     assert response.json()["error"]["code"] == "validation_error"
     assert response.json()["issues"][0]["location"] == ["path", "kind"]

@@ -19,6 +19,7 @@ from voice_archive_api.db.models.series import Series
 from voice_archive_api.db.models.user import User
 from voice_archive_api.db.session import create_database_engine, create_session_factory
 from voice_archive_api.logic.users import normalize_email_address
+from voice_archive_api.services.access import AccessContext
 from voice_archive_api.services.series.service import lock_series_books
 
 logger = logging.getLogger(__name__)
@@ -74,7 +75,7 @@ def run(argv: list[str] | None = None) -> int:
         settings = Settings()
         engine = create_database_engine(settings.database_url)
         try:
-            with create_session_factory(engine)() as db:
+            with create_session_factory(engine, access=AccessContext(user_id=None, is_trusted=True))() as db:
                 if args.command == "publish-demo":
                     publish_demo_content(db, book_id=args.book_id, series_id=args.series_id)
                 else:

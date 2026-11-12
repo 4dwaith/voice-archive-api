@@ -14,6 +14,12 @@ from voice_archive_api.db.models.file import StoredFile
 from voice_archive_api.db.operations import read_constraint_name
 from voice_archive_api.logic.books.validation import normalize_identity
 from voice_archive_api.logic.files import FileKind
+from voice_archive_api.services.access import (
+    can_access_resource,
+    create_file_access_filter,
+    create_owner_filter,
+    get_access_context,
+)
 from voice_archive_api.services.book_cleanup import delete_book_content_and_files
 from voice_archive_api.services.books.errors import BookNotFound as BookNotFound
 from voice_archive_api.services.books.schemas import BookCreate, BookPatch
@@ -33,7 +39,7 @@ class ContentPurgeRequired(ApplicationError):
 
 def get_book(db: Session, book_id: int, *, for_update: bool = False) -> Book:
     book = db.get(Book, book_id, with_for_update=for_update, populate_existing=for_update)
-    if book is None:
+    if book is None or not can_access_resource(db, book.owner_user_id):
         raise BookNotFound
     if for_update:
         # Refresh scalar file-owner projections after a possibly blocking lock wait.
@@ -83,7 +89,9 @@ def book_write(db: Session) -> Iterator[None]:
 def lock_book_for_series_write(db: Session, book_id: int, changes: dict[str, Any]) -> Book | None:
     # Read membership before taking locks, then recheck it after locking parents
     # in ID order and the book. Never acquire a series lock while holding a book lock.
-    snapshot = db.execute(select(Book.series_id).where(Book.id == book_id)).one_or_none()
+    snapshot = db.execute(
+        select(Book.series_id).where(Book.id == book_id, create_owner_filter(db, Book.owner_user_id))
+    ).one_or_none()
     if snapshot is None:
         return None
     source_id = snapshot[0]
@@ -97,10 +105,15 @@ def lock_book_for_series_write(db: Session, book_id: int, changes: dict[str, Any
 
 
 def validate_series_membership(db: Session, book: Book | None, changes: dict[str, Any]) -> None:
-    source_id = book.series_id if book else None
-    source_index = book.series_index if book else None
+    source_id = None
+    source_index = None
+    owner_user_id = get_access_context(db).user_id
+    if book is not None:
+        source_id = book.series_id
+        source_index = book.series_index
+        owner_user_id = book.owner_user_id
     target_id = changes.get("series_id", source_id)
-    if target_id is not None and get_series(db, target_id).owner_user_id != (book.owner_user_id if book else None):
+    if target_id is not None and get_series(db, target_id).owner_user_id != owner_user_id:
         raise SeriesNotFound
     if target_id == source_id:
         if changes.get("series_index", source_index) != source_index:
@@ -132,7 +145,7 @@ def check_book_links(db: Session, changes: dict[str, Any]) -> None:
 def list_books(db: Session, *, limit: int = 50, offset: int = 0) -> tuple[list[Book], int]:
     if not 1 <= limit <= 100 or offset < 0:
         raise ValueError("limit must be 1..100 and offset must be nonnegative")
-    query = select(Book).order_by(Book.id.asc())
+    query = select(Book).where(create_owner_filter(db, Book.owner_user_id)).order_by(Book.id.asc())
     total = db.scalar(select(func.count()).select_from(query.order_by(None).subquery()))
     return list(db.scalars(query.limit(limit).offset(offset))), total or 0
 
@@ -146,6 +159,7 @@ def claim_file(db: Session, file_id: int, *, book_id: int, kind: FileKind) -> No
             StoredFile.book_id.is_(None),
             StoredFile.section_id.is_(None),
             StoredFile.kind == kind,
+            create_file_access_filter(db),
         )
         .values(book_id=book_id)
         .returning(StoredFile.id)
@@ -164,7 +178,8 @@ def create_book(db: Session, payload: BookCreate) -> Book:
     with book_write(db):
         title = normalize_identity(payload.title)
         author = normalize_identity(payload.author)
-        check_duplicate(db, title, author)
+        owner_user_id = get_access_context(db).user_id
+        check_duplicate(db, title, author, owner_user_id=owner_user_id)
         changes = payload.model_dump()
         if "series_index" not in payload.model_fields_set:
             changes.pop("series_index")
@@ -174,6 +189,7 @@ def create_book(db: Session, payload: BookCreate) -> Book:
         check_book_links(db, changes)
         now = datetime.now(UTC)
         book = Book(
+            owner_user_id=owner_user_id,
             **{field: value for field, value in changes.items() if field not in file_service.BOOK_FILE_FIELDS.values()},
             normalized_title=title,
             normalized_author=author,

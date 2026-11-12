@@ -8,6 +8,7 @@ from sqlalchemy.orm import Session, sessionmaker
 
 from voice_archive_api.core.dependencies import get_app_state
 from voice_archive_api.db import models  # noqa: F401 - register all foreign-key targets for standalone jobs
+from voice_archive_api.services.access import AccessContext
 
 
 def create_database_engine(database_url: str | URL) -> Engine:
@@ -19,8 +20,10 @@ def create_database_engine(database_url: str | URL) -> Engine:
     )
 
 
-def create_session_factory(engine: Engine) -> sessionmaker[Session]:
-    return sessionmaker(bind=engine, autoflush=False, expire_on_commit=False)
+def create_session_factory(engine: Engine, *, access: AccessContext | None = None) -> sessionmaker[Session]:
+    if access is None:
+        access = AccessContext(user_id=None)
+    return sessionmaker(bind=engine, autoflush=False, expire_on_commit=False, info={"access": access})
 
 
 def get_session_factory(request: Request) -> sessionmaker[Session]:
@@ -29,6 +32,9 @@ def get_session_factory(request: Request) -> sessionmaker[Session]:
 
 def get_db(
     factory: Annotated[sessionmaker[Session], Depends(get_session_factory)],
+    request: Request,
 ) -> Generator[Session]:
     with factory() as s:
+        if (access := getattr(request.state, "access", None)) is not None:
+            s.info["access"] = access
         yield s

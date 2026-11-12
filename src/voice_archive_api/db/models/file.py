@@ -12,6 +12,7 @@ from sqlalchemy import (
     Integer,
     Text,
     UniqueConstraint,
+    text,
 )
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column
@@ -80,6 +81,9 @@ class StoredFile(Base):
     )
     file_metadata: Mapped[dict[str, int | str]] = mapped_column("metadata", JSONB)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    uploaded_by_user_id: Mapped[int] = mapped_column(
+        BigInteger, ForeignKey("users.id", ondelete="RESTRICT"), server_default=text("1"), index=True
+    )
     book_id: Mapped[int | None] = mapped_column(BigInteger, ForeignKey("books.id", ondelete="SET NULL"))
     section_id: Mapped[int | None] = mapped_column(BigInteger, ForeignKey("sections.id", ondelete="SET NULL"))
     unlinked_at: Mapped[datetime | None] = mapped_column(

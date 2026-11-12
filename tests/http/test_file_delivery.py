@@ -5,6 +5,7 @@ from unittest.mock import Mock
 
 import pytest
 from fastapi.responses import FileResponse
+from sqlalchemy.orm import Session
 
 from tests.database.content_helpers import add_audio, add_section
 from tests.database.files.test_file_ownership import add_book
@@ -18,31 +19,33 @@ from voice_archive_api.services.files.audio import InvalidAudio
 
 
 @pytest.mark.parametrize("method", ["GET", "HEAD"])
-def test_database_session_is_released_before_file_delivery(schema_only_client, monkeypatch, tmp_path, method):
-    state = {"session_closed": False}
+def test_database_session_is_released_before_file_delivery(client, test_engine, monkeypatch, tmp_path, method):
+    state = {"open_sessions": 0}
 
     def database():
-        try:
-            yield Mock()
-        finally:
-            state["session_closed"] = True
+        with Session(test_engine) as db:
+            state["open_sessions"] += 1
+            try:
+                yield db
+            finally:
+                state["open_sessions"] -= 1
 
     storage = LocalStorage(tmp_path / "uploads")
     key = storage.promote(storage.put_temporary(BytesIO(b"test PDF bytes"), max_bytes=100))
     record = Mock(storage_key=key, kind="source_pdf")
     monkeypatch.setattr(service, "get_file", Mock(return_value=record))
-    overrides = schema_only_client.app.dependency_overrides
+    overrides = client.app.dependency_overrides
     monkeypatch.setitem(overrides, get_db, database)
     monkeypatch.setitem(overrides, get_file_delivery, lambda: LocalFileDelivery(storage))
 
     original_call = FileResponse.__call__
 
     async def check_session_closed(response, scope, receive, send):
-        assert state["session_closed"]
+        assert state["open_sessions"] == 0
         await original_call(response, scope, receive, send)
 
     monkeypatch.setattr(FileResponse, "__call__", check_session_closed)
-    response = schema_only_client.request(method, "/api/v1/files/1")
+    response = client.request(method, "/api/v1/files/1")
     assert response.status_code == 200
     assert response.content == (b"test PDF bytes" if method == "GET" else b"")
 
@@ -55,9 +58,11 @@ def test_delivery_rejects_a_directory_instead_of_a_file(tmp_path):
         LocalFileDelivery(storage).response(key, media_type="application/pdf", filename="source.pdf")
 
 
-def test_section_file_http_delete_guard_and_invalid_audio_upload(client, application):
+def test_section_file_http_delete_guard_and_invalid_audio_upload(client, application, test_user):
     with application.state.session_factory() as db:
-        root = add_section(db, add_book(db).id)
+        book = add_book(db)
+        book.owner_user_id = test_user.id
+        root = add_section(db, book.id)
         record = add_audio(db, section_id=root.id)
         file_id = record.id
         db.commit()
@@ -70,7 +75,7 @@ def test_section_file_http_delete_guard_and_invalid_audio_upload(client, applica
     )
 
 
-def test_audio_registry_delivery_and_invalid_preparation(client, application, file_storage):
+def test_audio_registry_delivery_and_invalid_preparation(client, application, file_storage, test_user):
     from io import BytesIO
 
     from voice_archive_api.services.files.service import create_file
@@ -78,7 +83,7 @@ def test_audio_registry_delivery_and_invalid_preparation(client, application, fi
     data = b"synthetic invalid MP3 bytes"
     key = file_storage.promote(file_storage.put_temporary(BytesIO(data), max_bytes=1000))
     with application.state.session_factory() as db:
-        record = add_audio(db, storage_key=key, byte_size=len(data))
+        record = add_audio(db, storage_key=key, byte_size=len(data), uploaded_by_user_id=test_user.id)
         file_id = record.id
         db.commit()
         with pytest.raises(InvalidAudio):
