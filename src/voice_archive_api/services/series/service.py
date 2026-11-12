@@ -1,11 +1,14 @@
 from datetime import UTC, datetime
 
 from sqlalchemy import func, or_, select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from voice_archive_api.core.errors import ApplicationError
 from voice_archive_api.db.models.book import Book
 from voice_archive_api.db.models.series import Series
+from voice_archive_api.db.operations import read_constraint_name
+from voice_archive_api.services.books.errors import BookNotFound
 from voice_archive_api.services.series.schemas import SeriesCreate, SeriesPatch
 
 
@@ -84,8 +87,10 @@ def replace_series_books(db: Session, series_id: int, book_ids: list[int]) -> Se
         series = get_series(db, series_id, for_update=True)
         books = lock_series_books(db, series_id, book_ids)
         by_id = {book.id: book for book in books}
+        if any(book_id not in by_id or by_id[book_id].owner_user_id != series.owner_user_id for book_id in book_ids):
+            raise BookNotFound
         if len(set(book_ids)) != len(book_ids) or any(
-            book_id not in by_id or by_id[book_id].series_id not in (None, series_id) for book_id in book_ids
+            by_id[book_id].series_id not in (None, series_id) for book_id in book_ids
         ):
             raise SeriesOrderConflict
         positions = {book_id: index for index, book_id in enumerate(book_ids, start=1)}
@@ -99,6 +104,8 @@ def replace_series_books(db: Session, series_id: int, book_ids: list[int]) -> Se
         db.commit()
         db.refresh(series)
         return series
-    except Exception:
+    except Exception as exc:
         db.rollback()
+        if isinstance(exc, IntegrityError) and read_constraint_name(exc) == "fk_books_series_ownership":
+            raise BookNotFound from exc
         raise

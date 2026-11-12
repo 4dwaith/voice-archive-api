@@ -104,18 +104,18 @@ Feature: Manage ordered book series
 
   Scenario: Replacing a series cannot take a book from another series
     When I replace the books in series "Adventures" with "Return, Beginning, Essays"
-    Then I am told that a series cannot contain missing, repeated or another series' books
+    Then I am told that a series cannot contain repeated or another series' books
     And my catalog remains unchanged
 
   Scenario: Replacing a series cannot repeat a book
     When I replace the books in series "Adventures" with "Return, Beginning, Beginning"
-    Then I am told that a series cannot contain missing, repeated or another series' books
+    Then I am told that a series cannot contain repeated or another series' books
     And my catalog remains unchanged
 
   Scenario: A missing book rejects the entire replacement
     Given book "Lost Book" is no longer in my library
     When I replace the books in series "Adventures" with "Return, Lost Book"
-    Then I am told that a series cannot contain missing, repeated or another series' books
+    Then I am told that the book cannot be found
     And my catalog remains unchanged
 
   Scenario: Remove every book from a series

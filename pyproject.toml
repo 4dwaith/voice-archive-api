@@ -29,6 +29,8 @@ dependencies = [
     "sentencepiece>=0.2.1,<0.3",
     "sqlalchemy>=2.0,<3",
     "uvicorn[standard]>=0.37,<1",
+    "pwdlib[argon2]>=0.3,<1",
+    "email-validator>=2,<3",
 ]
 
 [dependency-groups]
@@ -81,6 +83,7 @@ module = ["mutagen.*"]
 ignore_missing_imports = true
 
 [project.scripts]
+manage-users = "voice_archive_api.cli.users:main"
 import-book-content = "voice_archive_api.cli.content_import:main"
 summarize-book = "voice_archive_api.cli.summaries:main"
 build-book-windows = "voice_archive_api.cli.windows:main"

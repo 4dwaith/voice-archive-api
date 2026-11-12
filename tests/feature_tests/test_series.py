@@ -172,7 +172,7 @@ def assert_changes_saved(catalog):
 
 
 @then("I am told that series positions must remain consecutive")
-@then("I am told that a series cannot contain missing, repeated or another series' books")
+@then("I am told that a series cannot contain repeated or another series' books")
 def assert_invalid_series_change(catalog):
     response = catalog["response"]
 
@@ -186,6 +186,14 @@ def assert_missing_series(catalog):
 
     assert response.status_code == 404, response.text
     assert response.json()["error"]["code"] == "series_not_found"
+
+
+@then("I am told that the book cannot be found")
+def assert_missing_book(catalog):
+    response = catalog["response"]
+
+    assert response.status_code == 404, response.text
+    assert response.json()["error"]["code"] == "book_not_found"
 
 
 @then("I am told that the series title is invalid")

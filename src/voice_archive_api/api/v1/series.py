@@ -2,6 +2,7 @@ from typing import Annotated, Any
 
 from fastapi import APIRouter, Path, Query, Response
 
+from voice_archive_api.api.schemas.books import BookErrorResponse
 from voice_archive_api.api.schemas.errors import ValidationErrorResponse
 from voice_archive_api.api.schemas.series import SeriesErrorResponse
 from voice_archive_api.api.v1.books import Database
@@ -72,7 +73,10 @@ def delete_series(series_id: SeriesId, db: Database) -> Response:
     "/{series_id}/books",
     response_model=SeriesDetail,
     operation_id="replace_api_v1_series_books",
-    responses=missing_series | {409: {"model": SeriesErrorResponse, "description": "Invalid membership or order"}},
+    responses={
+        404: {"model": SeriesErrorResponse | BookErrorResponse, "description": "Series or referenced book not found"},
+        409: {"model": SeriesErrorResponse, "description": "Invalid membership or order"},
+    },
 )
 def replace_series_books(series_id: SeriesId, book_ids: list[FileId], db: Database) -> SeriesDetail:
     series = service.replace_series_books(db, series_id, book_ids)

@@ -4,8 +4,10 @@ from uuid import UUID
 from sqlalchemy import (
     BigInteger,
     CheckConstraint,
+    Computed,
     DateTime,
     ForeignKey,
+    ForeignKeyConstraint,
     Identity,
     Index,
     Integer,
@@ -29,6 +31,15 @@ from voice_archive_api.logic.files import FileKind
 class Book(Base):
     __tablename__ = "books"
     __table_args__ = (
+        # Ensures the series and book have the same owner
+        # This check is deferred until the end of the transaction
+        ForeignKeyConstraint(
+            ["series_id", "ownership_key"],
+            ["series.id", "series.ownership_key"],
+            name="fk_books_series_ownership",
+            deferrable=True,
+            initially="DEFERRED",
+        ),
         CheckConstraint(
             "(series_id IS NULL AND series_index IS NULL) OR (series_id IS NOT NULL AND series_index > 0 AND series_index IS NOT NULL)",
             name="series_membership",
@@ -45,11 +56,19 @@ class Book(Base):
         # Fixed-size index expressions avoid long Unicode text.
         Index(
             UNIQUE_BOOK_IDENTITY,
+            "owner_user_id",
             text("digest(normalized_title, 'sha256')"),
             text("digest(normalized_author, 'sha256')"),
             unique=True,
+            postgresql_nulls_not_distinct=True,
         ),
     )
+
+    owner_user_id: Mapped[int | None] = mapped_column(
+        BigInteger, ForeignKey("users.id", ondelete="RESTRICT"), index=True
+    )
+    # Zero represents the public collection in the composite series foreign key.
+    ownership_key: Mapped[int] = mapped_column(BigInteger, Computed("coalesce(owner_user_id, 0)", persisted=True))
 
     id: Mapped[int] = mapped_column(
         BigInteger,

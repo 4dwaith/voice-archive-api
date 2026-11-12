@@ -15,14 +15,10 @@ from voice_archive_api.db.operations import read_constraint_name
 from voice_archive_api.logic.books.validation import normalize_identity
 from voice_archive_api.logic.files import FileKind
 from voice_archive_api.services.book_cleanup import delete_book_content_and_files
+from voice_archive_api.services.books.errors import BookNotFound as BookNotFound
 from voice_archive_api.services.books.schemas import BookCreate, BookPatch
 from voice_archive_api.services.files import service as file_service
 from voice_archive_api.services.series.service import SeriesNotFound, SeriesOrderConflict, get_series
-
-
-class BookNotFound(ApplicationError):
-    code = "book_not_found"
-    message = "Book not found"
 
 
 class DuplicateBook(ApplicationError):
@@ -45,9 +41,18 @@ def get_book(db: Session, book_id: int, *, for_update: bool = False) -> Book:
     return book
 
 
-def check_duplicate(db: Session, normalized_title: str, normalized_author: str, exclude_id: int | None = None) -> None:
+def check_duplicate(
+    db: Session,
+    normalized_title: str,
+    normalized_author: str,
+    exclude_id: int | None = None,
+    *,
+    owner_user_id: int | None = None,
+) -> None:
     query = select(Book.id).where(
-        Book.normalized_title == normalized_title, Book.normalized_author == normalized_author
+        Book.normalized_title == normalized_title,
+        Book.normalized_author == normalized_author,
+        Book.owner_user_id == owner_user_id,
     )
     if exclude_id is not None:
         query = query.where(Book.id != exclude_id)
@@ -67,6 +72,7 @@ def book_write(db: Session) -> Iterator[None]:
             errors = {
                 UNIQUE_BOOK_IDENTITY: DuplicateBook,
                 FOREIGN_KEY_BOOK_SERIES: SeriesNotFound,
+                "fk_books_series_ownership": SeriesNotFound,
                 UNIQUE_BOOK_SERIES_INDEX: SeriesOrderConflict,
             }
             if constraint is not None and (error := errors.get(constraint)):
@@ -94,6 +100,8 @@ def validate_series_membership(db: Session, book: Book | None, changes: dict[str
     source_id = book.series_id if book else None
     source_index = book.series_index if book else None
     target_id = changes.get("series_id", source_id)
+    if target_id is not None and get_series(db, target_id).owner_user_id != (book.owner_user_id if book else None):
+        raise SeriesNotFound
     if target_id == source_id:
         if changes.get("series_index", source_index) != source_index:
             raise SeriesOrderConflict
@@ -200,7 +208,7 @@ def patch_book(db: Session, book_id: int, payload: BookPatch) -> Book:
 
         title = normalize_identity(changes.get("title", book.title))
         author = normalize_identity(changes.get("author", book.author))
-        check_duplicate(db, title, author, exclude_id=book.id)
+        check_duplicate(db, title, author, exclude_id=book.id, owner_user_id=book.owner_user_id)
         check_book_links(db, changes)
         now = datetime.now(UTC)
 

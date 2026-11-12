@@ -5,6 +5,58 @@ CRUD and pagination, optional cover/PDF links, file uploads, and range-enabled
 file delivery. The frontend is a separate project; authentication is not
 implemented yet.
 
+## Users and ownership administration (first review)
+
+The schema and local commands are implemented; HTTP authentication, access
+enforcement and the login/guest UI remain subsequent reviews. Do not deploy this
+intermediate version as a protected multi-user service. Until those reviews,
+ordinary HTTP creates still have no authenticated owner and use the public scope.
+
+Migration `0028_users_and_ownership` creates the disabled placeholder account
+`Unassigned` and assigns all existing books and series to it. No migration
+argument or account-creation step is required. From this directory with the
+configured database environment:
+
+```powershell
+uv run --env-file .env alembic upgrade head
+uv run --env-file .env manage-users create reader@example.com --display-name "Reader"
+uv run --env-file .env manage-users reset-password reader@example.com
+uv run --env-file .env manage-users publish-demo --book-id 12
+uv run --env-file .env manage-users publish-demo --series-id 3
+```
+
+Accounts are identified by email. Creation and password reset validate the
+address with email-validator, normalize it, and treat it case-insensitively.
+Validation does not perform DNS lookups or verify mailbox ownership. Unicode
+email addresses and internationalized domains are supported; plus tags and dots
+are preserved. Display names are optional Unicode text and need not be unique.
+Both commands prompt twice without echo and store an Argon2 hash through pwdlib.
+Passwords are never command-line arguments or command output.
+
+`Unassigned` is the disabled placeholder's display name. It has no email or
+password, including on an empty database, and cannot be targeted by the
+email-based password-reset command. Database constraints prevent an account
+without an email from having a password or being enabled. Public signup and
+mailbox verification remain future work.
+
+`owner_user_id IS NULL` identifies public books/series. Demo designation publishes
+a standalone book or an entire series atomically; publishing a single series
+member is rejected. A public identity conflict rolls back the whole change.
+Book title/author uniqueness applies separately to each user and to the public
+collection. A deferred composite foreign key requires series/book ownership to
+match, using a generated `ownership_key` (zero for public) solely for that
+constraint. User deletion is restricted while books/series reference the account.
+
+Files have no independent user/admin column: linked files inherit their book's
+ownership, directly or through a section. Only unlinked files are admin-owned;
+enforcement follows in the API review. No file bytes, content versions, imported
+content, preparation records or media links are changed by migration or demo
+designation. Local commands are trusted operator tools, not public API endpoints.
+
+Downgrade restores global title/author uniqueness and refuses conflicting data
+transactionally. Resolve cross-owner duplicates before attempting a downgrade;
+there is no automatic deletion or merge of books.
+
 Operational failures consumed by CLI, HTTP/provider fallbacks or maintenance are
 logged with their causes, stack locations and operation/resource identifiers.
 `core/logging.py` redacts configured credentials and omits SQL statements/parameters,
@@ -74,9 +126,11 @@ Writes that would leave gaps or change an occupied position return 409.
 
 `PUT /api/v1/series/{id}/books` accepts the complete ordered array of book IDs,
 for example `[12, 4, 9]`. It reorders/assigns positions atomically, detaches omitted
-members and accepts unassigned books. An empty array clears membership. Duplicate,
-missing or foreign-series books reject the whole request with 409. Unknown series
-IDs return 404. Series detail returns `book_ids` in series order; series lists
+members and accepts unassigned books. An empty array clears membership. Duplicate
+books or books already assigned to another series reject the whole request with
+409. Missing books and books with a different owner return `book_not_found` (404).
+Book writes referencing a series with a different owner return `series_not_found`
+(404), as do unknown series IDs. Series detail returns `book_ids` in series order; series lists
 retain ascending ID order and the book pagination limits.
 
 Series titles retain display whitespace and use book title limits; duplicate
