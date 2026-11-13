@@ -146,6 +146,10 @@ def list_books(db: Session, *, limit: int = 50, offset: int = 0) -> tuple[list[B
     if not 1 <= limit <= 100 or offset < 0:
         raise ValueError("limit must be 1..100 and offset must be nonnegative")
     query = select(Book).where(create_owner_filter(db, Book.owner_user_id)).order_by(Book.id.asc())
+    access = get_access_context(db)
+    # Public books remain readable by ID, but signed-in libraries list only owned books.
+    if access.user_id is not None and not access.is_trusted:
+        query = query.where(Book.owner_user_id == access.user_id)
     total = db.scalar(select(func.count()).select_from(query.order_by(None).subquery()))
     return list(db.scalars(query.limit(limit).offset(offset))), total or 0
 

@@ -77,20 +77,44 @@ def test_login_current_user_and_logout(secure_client):
     assert client.get("/api/v1/auth/me").json() is None
 
 
-@pytest.mark.parametrize("actor,expected", [(None, ["public"]), ("a", ["a", "public"]), ("b", ["b", "public"])])
-def test_catalogs_filter_items_and_totals(secure_client, actor, expected):
+@pytest.mark.parametrize(
+    "resource,actor,expected",
+    [
+        ("books", None, ["public"]),
+        ("books", "a", ["a"]),
+        ("books", "b", ["b"]),
+        ("series", None, ["public"]),
+        ("series", "a", ["a", "public"]),
+        ("series", "b", ["b", "public"]),
+    ],
+)
+def test_catalogs_filter_items_and_totals(secure_client, resource, actor, expected):
     client, ids = secure_client
     if actor:
         sign_in(client, actor)
 
-    for resource, title_key in (("books", "title"), ("series", "title")):
-        result = client.get(f"/api/v1/{resource}?limit=1").json()
+    result = client.get(f"/api/v1/{resource}").json()
 
-        assert result["total"] == len(expected)
-        assert result["items"][0][title_key] in expected
-        assert {item["id"] for item in client.get(f"/api/v1/{resource}").json()["items"]} == {
-            ids[resource][name] for name in expected
-        }
+    assert result["total"] == len(expected)
+    assert [item["id"] for item in result["items"]] == [ids[resource][name] for name in expected]
+
+    for offset in range(len(expected) + 1):
+        page = client.get(f"/api/v1/{resource}?limit=1&offset={offset}").json()
+
+        assert page["total"] == len(expected)
+        assert [item["id"] for item in page["items"]] == [ids[resource][name] for name in expected[offset : offset + 1]]
+
+
+@pytest.mark.parametrize("actor", [None, "a"])
+def test_public_books_remain_readable_by_id(secure_client, actor):
+    client, ids = secure_client
+    if actor:
+        sign_in(client, actor)
+
+    response = client.get(f"/api/v1/books/{ids['books']['public']}")
+
+    assert response.status_code == 200
+    assert response.json()["id"] == ids["books"]["public"]
 
 
 @pytest.mark.parametrize(
