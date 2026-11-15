@@ -39,8 +39,12 @@ class UserResponse(BaseModel):
     display_name: str | None
 
 
+class AuthConfigResponse(BaseModel):
+    login_enabled: bool
+
+
 def resolve_user(request: Request, db: Session, token: str | None) -> User | None:
-    if token is None:
+    if not get_app_state(request).settings.login_enabled or token is None:
         return None
     secret = get_app_state(request).settings.auth_secret
     try:
@@ -90,6 +94,8 @@ def authorize_api_request(request: Request, db: Database, token: SessionCookie) 
 @router.post("/login", response_model=UserResponse, operation_id="login_api_v1_user")
 def login(payload: LoginInput, request: Request, response: Response, db: Database) -> User:
     state = get_app_state(request)
+    if not state.settings.login_enabled:
+        raise HTTPException(status_code=503, detail="Sign-in is disabled")
     secret = state.settings.auth_secret
     if secret is None:
         raise HTTPException(status_code=503, detail="Sign-in is not configured")
@@ -137,6 +143,12 @@ def login(payload: LoginInput, request: Request, response: Response, db: Databas
         path="/api",
     )
     return user
+
+
+@router.get("/config", response_model=AuthConfigResponse, operation_id="get_api_v1_auth_config")
+def get_auth_config(request: Request) -> AuthConfigResponse:
+    settings = get_app_state(request).settings
+    return AuthConfigResponse(login_enabled=settings.login_enabled and settings.auth_secret is not None)
 
 
 @router.get("/me", response_model=UserResponse | None, operation_id="get_api_v1_current_user")

@@ -3,7 +3,15 @@
 FastAPI backend using Python 3.14, SQLAlchemy, and PostgreSQL 18. Supports book
 CRUD and pagination, optional cover/PDF links, file uploads, and range-enabled
 file delivery, cookie JWT authentication and owner-scoped libraries. The frontend
-login/guest interface is a separate review and is not implemented yet.
+login/guest interface supports public reading without an account.
+
+Set `VOICE_ARCHIVE_LOGIN_ENABLED=false` for a guest-only deployment (default:
+`true`). This disables sign-in and treats existing session cookies as guests;
+public content remains readable while private content, writes and AI calls stay
+protected. `/api/v1/auth/config` reports sign-in availability to the PWA, including
+whether the signing secret is configured. Compose forwards the flag from `.env`;
+recreate the API after changing it. See the [deployment guide](../deploy/README.md)
+for the small GCP demo direction.
 
 ## Users and ownership administration (first review)
 

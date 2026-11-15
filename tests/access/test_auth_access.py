@@ -369,3 +369,39 @@ def test_sign_in_without_server_secret_is_unavailable(secure_client, application
 
     assert response.status_code == 503
     assert COOKIE_NAME not in client.cookies
+
+
+@pytest.mark.parametrize(
+    "enabled,has_secret,expected", [(True, True, True), (True, False, False), (False, True, False)]
+)
+def test_auth_config_reports_sign_in_availability(schema_only_client, enabled, has_secret, expected):
+    settings = schema_only_client.app.state.settings
+    settings.login_enabled = enabled
+    settings.auth_secret = SecretStr("isolated-auth-test-secret-with-32-characters") if has_secret else None
+
+    response = schema_only_client.get("/api/v1/auth/config")
+
+    assert response.status_code == 200
+    assert response.json() == {"login_enabled": expected}
+
+
+def test_disabled_login_rejects_credentials_and_existing_sessions(secure_client, application):
+    client, ids = secure_client
+    sign_in(client)
+    application.state.settings.login_enabled = False
+
+    response = client.post("/api/v1/auth/login", json={"email": "a@example.com", "password": "test-password"})
+
+    assert response.status_code == 503
+    assert "set-cookie" not in response.headers
+    assert client.get("/api/v1/auth/me").json() is None
+    assert [book["id"] for book in client.get("/api/v1/books").json()["items"]] == [ids["books"]["public"]]
+    assert client.get(f"/api/v1/books/{ids['books']['a']}").status_code == 404
+    assert client.post("/api/v1/books", json={"title": "Blocked", "language": "en"}).status_code == 401
+    assert client.post("/api/v1/live/token").status_code == 401
+    assert client.post("/api/v1/library/ask", json={"query": "Question"}).status_code == 401
+
+    client.cookies.set(COOKIE_NAME, "invalid", path="/api")
+
+    assert client.get("/api/v1/auth/me").json() is None
+    assert client.post("/api/v1/auth/logout").status_code == 204

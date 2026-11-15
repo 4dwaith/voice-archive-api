@@ -26,6 +26,7 @@ class Settings(BaseSettings):
     postgres_db: str = Field(min_length=1)
     postgres_host: str = Field(default="127.0.0.1", min_length=1)
     postgres_port: int = Field(default=5432, ge=1, le=65535)
+    login_enabled: bool = True
     auth_secret: SecretStr | None = Field(default=None, min_length=32)
     auth_cookie_secure: bool = True
     auth_token_ttl_seconds: int = Field(default=43_200, ge=60, le=86_400)
